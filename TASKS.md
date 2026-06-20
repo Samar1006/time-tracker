@@ -22,14 +22,14 @@
 | Branch | Owner | vs `main` | PR | Health | Action |
 |--------|-------|-----------|-----|--------|--------|
 | `main` | — | — | — | 🟢 Full backend (25 tests) | Integration target |
-| `ai-pipeline` | Allisonmini | merged ([#1](https://github.com/Samar1006/time-tracker/pull/1)) | — | ⚪ Done | Safe to delete remote branch |
-| `dj` | Frontend | **+1** / **−7** | pending | 🟡 Stale | PR review agent next — **rebase onto `main` first** |
+| `ai-pipeline` | Allisonmini | merged ([#1](https://github.com/Samar1006/time-tracker/pull/1)) | — | ⚪ Done | Deleted |
+| `dj` | Frontend | **+1** / 0 | [#3](https://github.com/Samar1006/time-tracker/pull/3) open | 🟢 Ready | PR review agent reviewing |
 
 ### Merge order (do not reorder)
 
 ```
 1. ~~ai-pipeline → main~~ ✅ Done (PR #1)
-2. dj           → main   (rebase first; PR review agent reviewing)
+2. ~~dj → main~~ 🟡 PR [#3](https://github.com/Samar1006/time-tracker/pull/3) open (rebased, ready for review)
 3. categoryHint → categorizationService swap (small follow-up on main)
 ```
 
@@ -44,7 +44,7 @@
 | 3 | P0 | Demo seed + fallback JSON | Samar | ✅ Merged | `main` |
 | 4 | P0 | Schedule parse + categorization | Allisonmini | ✅ Merged | `main` |
 | 5 | P0 | `POST /api/transcribe` | Allisonmini | ✅ Merged | `main` |
-| 6 | P1 | Frontend auth shell | Frontend | 🟡 On `dj`, needs rebase | `dj` |
+| 6 | P1 | Frontend auth shell | Frontend | 🟡 PR #3 open | `dj` |
 | 7 | P1 | Timeline bar chart UI | Frontend | 🔲 Not started | `dj` |
 | 8 | P1 | Swap `categoryHint` → `categorizationService` | Samar / Allison | 🔲 After #4 merges | `main` |
 | 9 | P2 | Native mac/iOS/browser capture | TBD | 🔲 Not started | — |
@@ -61,7 +61,7 @@
 
 ## Allisonmini — AI & voice (merged)
 
-**Status:** ✅ Merged to `main` via PR #1. Remote branch `ai-pipeline` can be deleted.
+**Status:** ✅ Merged to `main` via PR #1. Branch `ai-pipeline` deleted.
 
 **On `main`:** schedule parse, categorize, transcribe, integrated `app.js`.
 
@@ -69,26 +69,10 @@
 
 ## Frontend — Angular (`dj`)
 
-**Owner:** Frontend team  
-**App path:** `frontend/time-tracker-app/` (Angular 21)  
-**Shipped on branch:** Login + signup pages, auth layout  
-**Not yet built:** Timeline bar chart wired to `GET /api/timeline`
+**Status:** Rebased onto `main`. PR [#3](https://github.com/Samar1006/time-tracker/pull/3) open — PR review agent reviewing.
 
-### Required before PR
-
-1. **Rebase `dj` onto `main`** — currently 5 commits behind (missing entire activity API + foreman docs).
-2. Confirm API base URL (suggest `http://localhost:4000` via environment config).
-3. Build timeline view against contract shape in `API_CONTRACT.md`.
-
-### Rebase command (for frontend owner)
-
-```bash
-git checkout dj
-git fetch origin
-git rebase origin/main
-# resolve conflicts if any, then force-push with lease
-git push --force-with-lease origin dj
-```
+**On branch:** Login + signup pages, auth layout (Angular 21 under `frontend/time-tracker-app/`).  
+**Not yet built:** Timeline bar chart wired to `GET /api/timeline`.
 
 ---
 
@@ -97,8 +81,8 @@ git push --force-with-lease origin dj
 | Risk | Severity | Mitigation |
 |------|----------|------------|
 | `dj` rebased before `ai-pipeline` merges | 🟢 Low | Frontend only needs `/api/timeline` (already on `main`) |
-| `dj` rebased before PR | 🔴 High | Still ~7 commits behind `main` |
-| `ai-pipeline` remote branch | 🟢 Low | Merged — optional cleanup |
+| `dj` rebased | 🟢 Done | PR #3 open, 0 commits behind `main` |
+| `ai-pipeline` remote branch | 🟢 Done | Deleted |
 
 ---
 
