@@ -1,0 +1,65 @@
+{
+  "userId": "user-demo-1",
+  "date": "2026-06-20",
+  "timezone": "UTC",
+  "totalTrackedSec": 15300,
+  "hours": [
+    {
+      "hour": 9,
+      "label": "09:00",
+      "totalTrackedSec": 3600,
+      "blocks": [
+        {
+          "start": "2026-06-20T09:00:00.000Z",
+          "end": "2026-06-20T10:00:00.000Z",
+          "activity": "Visual Studio Code",
+          "category": "work",
+          "source": "demo",
+          "confidence": 0.7,
+          "durationSec": 3600
+        }
+      ]
+    },
+    {
+      "hour": 10,
+      "label": "10:00",
+      "totalTrackedSec": 2700,
+      "blocks": [
+        {
+          "start": "2026-06-20T10:15:00.000Z",
+          "end": "2026-06-20T10:45:00.000Z",
+          "activity": "github.com / Safari",
+          "category": "work",
+          "source": "demo",
+          "confidence": 1,
+          "durationSec": 1800
+        },
+        {
+          "start": "2026-06-20T10:45:00.000Z",
+          "end": "2026-06-20T11:00:00.000Z",
+          "activity": "Slack",
+          "category": "communication",
+          "source": "demo",
+          "confidence": 0.7,
+          "durationSec": 900
+        }
+      ]
+    },
+    {
+      "hour": 14,
+      "label": "14:00",
+      "totalTrackedSec": 9000,
+      "blocks": [
+        {
+          "start": "2026-06-20T14:00:00.000Z",
+          "end": "2026-06-20T16:30:00.000Z",
+          "activity": "Xcode",
+          "category": "work",
+          "source": "demo",
+          "confidence": 0.7,
+          "durationSec": 9000
+        }
+      ]
+    }
+  ]
+}
