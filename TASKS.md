@@ -22,9 +22,8 @@
 | Branch | Owner | vs `main` | PR | Health | Action |
 |--------|-------|-----------|-----|--------|--------|
 | `main` | — | — | — | 🟢 Protected | Integration target |
-| `ai-pipeline` | Allisonmini | **+1** / 0 | [#1](https://github.com/Samar1006/time-tracker/pull/1) open, **mergeable** | 🟢 Ready | PR review agent → merge |
-| `dj` | Frontend | **+1** / **−5** | none | 🟡 Stale | **Rebase onto `main`** before next PR |
-| `ingestion-timeline` | Samar | 0 / **−2** | merged ([#2](https://github.com/Samar1006/time-tracker/pull/2)) | ⚪ Done | Safe to delete |
+| `ai-pipeline` | Allisonmini | **+1** / 0 | [#1](https://github.com/Samar1006/time-tracker/pull/1) — **PR review agent merging** | 🟢 In merge | — |
+| `dj` | Frontend | **+1** / **−6** | none | 🟡 Stale | PR review agent reviews after `ai-pipeline` merge; **rebase onto `main` first** |
 
 ### Merge order (do not reorder)
 
@@ -54,7 +53,7 @@
 
 ## Samar — ingestion (merged)
 
-**Status:** ✅ On `main`. Branch `ingestion-timeline` can be deleted.
+**Status:** ✅ On `main`. ~~Branch `ingestion-timeline`~~ deleted (merged via PR #2).
 
 **Standby:** After `ai-pipeline` merges, replace `categoryHint.js` imports in `aggregationService.js` with `categorizationService.js`.
 
@@ -108,7 +107,7 @@ git push --force-with-lease origin dj
 | `dj` rebased before `ai-pipeline` merges | 🟢 Low | Frontend only needs `/api/timeline` (already on `main`) |
 | `dj` PR opened without rebase | 🔴 High | Will conflict on `frontend/`, miss server API |
 | Two env var names for LLM | 🟡 Low | Contract still says `OPENAI_*`; branch uses `ANTHROPIC_API_KEY` — fix at AI merge |
-| Stale `ingestion-timeline` branch | 🟢 Low | Delete to reduce confusion |
+| Stale `ingestion-timeline` branch | 🟢 Done | Deleted locally + on origin |
 
 ---
 
@@ -116,4 +115,4 @@ git push --force-with-lease origin dj
 
 1. **Who owns `dj`?** Assign name in this table.
 2. **Timeline UI timing:** start on rebased `dj` now, or wait for `ai-pipeline` merge?
-3. **Delete `backend/.gitkeep`** and stale `ingestion-timeline` branch?
+3. ~~**Delete `backend/.gitkeep`** and stale `ingestion-timeline` branch?~~ `ingestion-timeline` deleted.
