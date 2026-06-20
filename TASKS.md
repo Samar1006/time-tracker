@@ -30,7 +30,7 @@
 
 **Branch:** `ingestion-timeline`
 
-### Done (local, not pushed)
+### Done (on `ingestion-timeline`, pushed to origin)
 
 - `POST /api/events` — contract raw event shape (`timestamp`, `type`, `durationSec`, …)
 - `GET /api/timeline` — 24 hour buckets with categories + `demoTimeline.json` fallback
