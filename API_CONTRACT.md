@@ -12,9 +12,9 @@
 
 | Area | Owner | Branch (working) | Key files |
 |------|-------|------------------|-----------|
-| Ingestion, Redis storage, timeline aggregation | **Samar** | `ingestion-timeline` | `server/src/routes/activity.js`, `server/src/services/redisClient.js`, aggregation logic |
+| Ingestion, Redis storage, timeline aggregation | **Samar** | `main` (was `ingestion-timeline`) | `server/src/routes/activity.js`, `server/src/services/redisClient.js`, aggregation logic |
 | AI & voice pipeline | **Allisonmini** | `ai-pipeline` | `server/src/services/deepgramService.js`, `server/src/routes/schedule.js`, `server/src/services/categorizationService.js` |
-| Frontend | TBD | TBD | `frontend/` |
+| Frontend | **Frontend team** | `dj` | `frontend/time-tracker-app/` (Angular 21) |
 
 Both backend slices share one Express app under `server/`. Coordinate `server/package.json` and `server/src/app.js` router wiring via small PRs to `main`.
 
@@ -29,8 +29,7 @@ Documented in `server/.env.example`. Never commit real `.env`.
 | `PORT` | No (default `4000`) | shared | HTTP port |
 | `REDIS_URL` | No | Samar | Raw event storage; in-memory fallback when unset |
 | `DEEPGRAM_API_KEY` | For live STT only | Allisonmini | Speech-to-text |
-| `OPENAI_API_KEY` | No | Allisonmini | Optional LLM schedule refinement |
-| `OPENAI_MODEL` | No | Allisonmini | LLM model (default `gpt-4o-mini`) |
+| `ANTHROPIC_API_KEY` | No | Allisonmini | Optional Claude schedule refinement (on `ai-pipeline`) |
 
 ---
 
@@ -194,12 +193,13 @@ Output of transcript parsing. Times are **local wall-clock** `HH:MM` when date i
 
 #### `POST /api/transcribe`
 
-**Status:** 🔲 Not implemented — service exists, no route  
+**Status:** 🟡 On `ai-pipeline` PR #1 (not merged)  
 **Owner:** Allisonmini
 
-**Request:** `multipart/form-data` with `audio` file **or** JSON `{ "url": "https://..." }`.
+**Request:** JSON `{ "url": "https://..." }` **or** `{ "audioBase64": "..." }`.
 
-**Success:** `200` — `{ "transcript", "words": [...] }`
+**Success:** `200` — `{ "transcript", "words": [...] }`  
+**Errors:** `400` (no input), `502` (Deepgram error)
 
 ---
 
@@ -207,7 +207,7 @@ Output of transcript parsing. Times are **local wall-clock** `HH:MM` when date i
 
 #### `POST /api/schedule/parse`
 
-**Status:** ✅ Implemented on `ai-pipeline` (not merged to `main`)  
+**Status:** 🟡 On `ai-pipeline` PR #1 (not merged)  
 **Request:** `{ "transcript", "useLLM?": false }`  
 **Response:** `{ "blocks": [ Schedule block ] }`
 
@@ -232,9 +232,9 @@ Output of transcript parsing. Times are **local wall-clock** `HH:MM` when date i
 1. ✅ Contract documented (this file)
 2. ✅ `POST /api/events` + Redis write (Samar — `ingestion-timeline`)
 3. ✅ `GET /api/timeline` + hour bucketing (Samar — `ingestion-timeline`)
-4. 🔲 `POST /api/transcribe` route wired to Deepgram (Allisonmini)
-5. ✅ `POST /api/schedule/parse` (on branch, needs merge)
-6. 🔲 Frontend timeline bar chart against `/api/timeline`
+4. 🟡 `POST /api/transcribe` — on `ai-pipeline` PR #1
+5. 🟡 `POST /api/schedule/parse` + categorize — on `ai-pipeline` PR #1
+6. 🔲 Frontend timeline bar chart (`dj` branch — rebase needed)
 7. 🔲 End-to-end demo: mock events **or** voice → transcript → blocks → display
 
 ---

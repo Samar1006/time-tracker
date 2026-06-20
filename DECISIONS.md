@@ -25,7 +25,7 @@
 | AI & voice | Allisonmini | Deepgram STT, transcript → blocks, categorization |
 
 **Decision:** Two feature branches merge sequentially into `main`. Shared touchpoints: `server/src/app.js`, `server/package.json`, `API_CONTRACT.md`. Each owner avoids editing the other's primary files in the same PR.  
-**Consequences:** Small PRs; foreman reviews router wiring and contract alignment at merge time.
+**Consequences:** Small PRs; a dedicated **PR review agent** approves merges. Foreman tracks branch health and contract alignment — does not review PRs.
 
 ---
 
@@ -100,6 +100,19 @@
 **Context:** macOS/iOS trackers naturally produce focus intervals (`startedAt`/`endedAt`).  
 **Decision:** Raw events require `startedAt`, `endedAt`, and `label` rather than a single `timestamp` + `durationSec`.  
 **Consequences:** Clients must send intervals; aggregation splits across hour boundaries in UTC.
+
+---
+
+## ADR-010 — PR review delegated; foreman focuses on branch coordination
+
+**Date:** 2026-06-20  
+**Status:** Accepted  
+**Context:** Foreman was doing both coordination and PR code review. Team wants a separate agent for merge approval.  
+**Decision:**
+- **PR review agent** — reviews PRs for contract compliance, tests, and merge readiness.
+- **Foreman** — maintains `API_CONTRACT.md`, `TASKS.md`, `DECISIONS.md`; tracks branch ahead/behind status; flags integration conflicts; keeps MVP focused; does **not** approve or merge PRs.
+
+**Consequences:** Foreman reports branch health and coordination risks; merge decisions live with the review agent + branch owners.
 
 ---
 

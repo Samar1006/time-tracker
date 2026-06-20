@@ -2,7 +2,37 @@
 
 > **Foreman rule:** Update status, owners, blockers, and next steps here when you start or finish work. If unsure, add a **Question** instead of guessing.
 
-**Last foreman check:** 2026-06-20 — PR #2 merged to `main`
+**Last foreman check:** 2026-06-20
+
+---
+
+## Foreman scope
+
+| Foreman does | Foreman does **not** |
+|--------------|----------------------|
+| Track branch ahead/behind `main` | Review or approve PRs (→ **PR review agent**) |
+| Keep `API_CONTRACT.md` / `TASKS.md` / `DECISIONS.md` current | Merge PRs |
+| Flag merge conflicts & integration drift | Build features |
+| Coordinate merge order | Overwrite teammates' in-progress work |
+
+---
+
+## Branch status (live)
+
+| Branch | Owner | vs `main` | PR | Health | Action |
+|--------|-------|-----------|-----|--------|--------|
+| `main` | — | — | — | 🟢 Protected | Integration target |
+| `ai-pipeline` | Allisonmini | **+1** / 0 | [#1](https://github.com/Samar1006/time-tracker/pull/1) open, **mergeable** | 🟢 Ready | PR review agent → merge |
+| `dj` | Frontend | **+1** / **−5** | none | 🟡 Stale | **Rebase onto `main`** before next PR |
+| `ingestion-timeline` | Samar | 0 / **−2** | merged ([#2](https://github.com/Samar1006/time-tracker/pull/2)) | ⚪ Done | Safe to delete |
+
+### Merge order (do not reorder)
+
+```
+1. ai-pipeline  → main   (backend complete; PR #1 ready)
+2. dj           → main   (after rebase; adds Angular app under frontend/time-tracker-app/)
+3. categoryHint → categorizationService swap (small follow-up on main)
+```
 
 ---
 
@@ -10,120 +40,80 @@
 
 | # | Priority | Task | Owner | Status | Branch |
 |---|----------|------|-------|--------|--------|
-| 1 | P0 | `POST /api/events` stores raw events in Redis | Samar | ✅ Merged | `main` |
-| 2 | P0 | Redis client + `events:{userId}:{date}` schema | Samar | ✅ Merged | `main` |
-| 3 | P0 | `GET /api/timeline` hour-by-hour blocks | Samar | ✅ Merged | `main` |
-| 4 | P0 | Demo timeline fallback + mock seed | Samar | ✅ Merged | `main` |
-| 5 | P0 | PR ingestion slice → `main` | Samar | ✅ Merged ([#2](https://github.com/Samar1006/time-tracker/pull/2)) | — |
-| 6 | P0 | PR Allison slice → `main` | Allisonmini | 🟡 Ready (rebase needed) | `ai-pipeline` |
-| 7 | P0 | Merge `app.js` + `package.json` without conflicts | Allisonmini / Foreman | 🟡 In progress | `ai-pipeline` |
-| 8 | P0 | `POST /api/transcribe` HTTP route | Allisonmini | 🔲 Not started | `ai-pipeline` |
-| 9 | P1 | Swap `categoryHint` → `categorizationService` | Allisonmini / Samar | 🔲 After #6 | — |
-| 10 | P1 | Frontend timeline bar chart | TBD | 🔲 Not started | TBD |
-| 11 | P2 | Native macOS/iOS/browser capture | TBD | 🔲 Not started | — |
-| 12 | P2 | Redis vector categorization | Allisonmini | ⏸ Deferred | `ai-pipeline` |
-
-**Legend:** 🔲 Not started · 🟡 In progress / ready · ✅ Done · ⏸ Deferred · 🚫 Blocked
+| 1 | P0 | `POST /api/events` + Redis | Samar | ✅ Merged | `main` |
+| 2 | P0 | `GET /api/timeline` hour buckets | Samar | ✅ Merged | `main` |
+| 3 | P0 | Demo seed + fallback JSON | Samar | ✅ Merged | `main` |
+| 4 | P0 | Schedule parse + categorization | Allisonmini | 🟡 PR #1 ready | `ai-pipeline` |
+| 5 | P0 | `POST /api/transcribe` | Allisonmini | 🟡 On PR branch | `ai-pipeline` |
+| 6 | P1 | Frontend auth shell | Frontend | 🟡 On `dj`, needs rebase | `dj` |
+| 7 | P1 | Timeline bar chart UI | Frontend | 🔲 Not started | `dj` |
+| 8 | P1 | Swap `categoryHint` → `categorizationService` | Samar / Allison | 🔲 After #4 merges | `main` |
+| 9 | P2 | Native mac/iOS/browser capture | TBD | 🔲 Not started | — |
 
 ---
 
-## Samar — ingestion, storage & visualization
+## Samar — ingestion (merged)
 
-**Status:** ✅ Merged to `main` via PR #2
+**Status:** ✅ On `main`. Branch `ingestion-timeline` can be deleted.
 
-### Shipped
-
-- `POST /api/events`, `GET /api/timeline`, dev helpers (`/events/seed`, etc.)
-- Redis lists at `events:{userId}:{YYYY-MM-DD}` + in-memory fallback
-- `demoTimeline.json` fallback when no stored events
-- `categoryHint.js` (temporary until AI categorization merges)
-- 10/10 tests passing
-
-### Next steps (Samar)
-
-1. Stand by for `ai-pipeline` rebase — help resolve `app.js` if needed.
-2. After AI merge: replace `categoryHint` with `categorizationService` in aggregation.
+**Standby:** After `ai-pipeline` merges, replace `categoryHint.js` imports in `aggregationService.js` with `categorizationService.js`.
 
 ---
 
-## Allisonmini — AI & voice pipeline
+## Allisonmini — AI & voice (`ai-pipeline`)
 
-**Branch:** `ai-pipeline` — **rebase onto `main` before opening PR**
+**Status:** Rebased onto `main`. PR #1 is **mergeable** (no conflicts).
 
-### Done (on branch, not merged)
-
+**On branch (not yet on `main`):**
+- Integrated `app.js` — both activity + schedule routers
+- `POST /api/transcribe` — JSON `{ url }` or `{ audioBase64 }`
 - `POST /api/schedule/parse`, `POST /api/categorize/*`
-- `deepgramService.js` (library; no HTTP route yet)
-- Offline tests pass with no API keys
+- Claude (`ANTHROPIC_API_KEY`) for optional LLM refinement
 
-### Next steps
+**Contract note for review agent:** `/api/transcribe` uses JSON base64, not multipart — update `API_CONTRACT.md` when PR merges.
 
-1. **Rebase** `ai-pipeline` onto updated `main`.
-2. Resolve conflicts in: `server/.env.example`, `server/.gitignore`, `server/README.md`, `server/package.json`, `server/src/app.js`.
-3. Wire AI routes into `app.js` alongside existing `/api` activity router:
-
-   ```js
-   app.use('/api', activityRouter);      // Samar — keep
-   app.use('/api/schedule', scheduleRouter);
-   // + categorize routes + /api/transcribe
-   ```
-
-4. Add `POST /api/transcribe` per `API_CONTRACT.md`.
-5. Open PR → `main`.
-
-### Expected merge conflicts
-
-| File | Resolution |
-|------|------------|
-| `.env.example` | Union both: `REDIS_URL` + `DEEPGRAM_API_KEY` + `OPENAI_*` |
-| `package.json` | Union deps: add `@deepgram/sdk` to Samar's package |
-| `app.js` | Mount both routers (see above) |
-| `README.md` | Document both slices |
+**Blockers:** None — waiting on PR review agent merge.
 
 ---
 
-## Frontend
+## Frontend — Angular (`dj`)
 
-**Owner:** TBD
+**Owner:** Frontend team  
+**App path:** `frontend/time-tracker-app/` (Angular 21)  
+**Shipped on branch:** Login + signup pages, auth layout  
+**Not yet built:** Timeline bar chart wired to `GET /api/timeline`
 
-### Ready to build against `main`
+### Required before PR
+
+1. **Rebase `dj` onto `main`** — currently 5 commits behind (missing entire activity API + foreman docs).
+2. Confirm API base URL (suggest `http://localhost:4000` via environment config).
+3. Build timeline view against contract shape in `API_CONTRACT.md`.
+
+### Rebase command (for frontend owner)
 
 ```bash
-cd server && npm install && npm run dev
-curl "http://localhost:4000/api/timeline?userId=user-demo-1&date=2026-06-20"
-curl -X POST http://localhost:4000/api/events/seed -H 'Content-Type: application/json' \
-  -d '{"userId":"user-demo-1","date":"2026-06-20"}'
+git checkout dj
+git fetch origin
+git rebase origin/main
+# resolve conflicts if any, then force-push with lease
+git push --force-with-lease origin dj
 ```
-
-### Blockers
-
-- `frontend/` is empty (`.gitkeep` only).
-- Waiting on owner + stack.
 
 ---
 
-## Integration queue
+## Integration risks
 
-1. ~~**Samar:** PR `ingestion-timeline` → `main`~~ ✅ Done
-2. **Allisonmini:** rebase `ai-pipeline` → resolve conflicts → add transcribe → PR
-3. **Foreman:** review AI PR vs `API_CONTRACT.md`
-4. **Frontend:** branch when ready
+| Risk | Severity | Mitigation |
+|------|----------|------------|
+| `dj` rebased before `ai-pipeline` merges | 🟢 Low | Frontend only needs `/api/timeline` (already on `main`) |
+| `dj` PR opened without rebase | 🔴 High | Will conflict on `frontend/`, miss server API |
+| Two env var names for LLM | 🟡 Low | Contract still says `OPENAI_*`; branch uses `ANTHROPIC_API_KEY` — fix at AI merge |
+| Stale `ingestion-timeline` branch | 🟢 Low | Delete to reduce confusion |
 
 ---
 
 ## Questions for the team
 
-1. **Frontend owner & stack?** React/Vite, Next.js, other?
-2. **Default timezone for timeline:** keep `UTC` for hackathon demo?
-3. **Voice + tracked merge:** one chart or separate tabs for demo?
-4. **Delete `backend/` folder** now that `server/` is on `main`?
-
----
-
-## Blockers & risks
-
-| Item | Severity | Notes |
-|------|----------|-------|
-| `ai-pipeline` needs rebase | 🟡 Medium | Conflicts in 5 shared files — predictable, not blocking |
-| No `/api/transcribe` route | 🟡 Medium | Add before or in AI PR |
-| Frontend unassigned | 🟡 Medium | Timeline API live on `main` — UI can start now |
+1. **Who owns `dj`?** Assign name in this table.
+2. **Timeline UI timing:** start on rebased `dj` now, or wait for `ai-pipeline` merge?
+3. **Delete `backend/.gitkeep`** and stale `ingestion-timeline` branch?
