@@ -1,2 +1,3 @@
 # time-tracker
-Tracks how your spend your time
+Tracks how your spend your time.
+
