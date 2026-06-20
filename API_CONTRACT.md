@@ -12,7 +12,7 @@
 
 | Area | Owner | Branch (working) | Key files |
 |------|-------|------------------|-----------|
-| Ingestion, Redis storage, timeline aggregation | **Samar** | `samar` | `server/src/routes/activity.js`, `server/src/services/redisClient.js`, aggregation logic |
+| Ingestion, Redis storage, timeline aggregation | **Samar** | `ingestion-timeline` | `server/src/routes/activity.js`, `server/src/services/redisClient.js`, aggregation logic |
 | AI & voice pipeline | **Allisonmini** | `ai-pipeline` | `server/src/services/deepgramService.js`, `server/src/routes/schedule.js`, `server/src/services/categorizationService.js` |
 | Frontend | TBD | TBD | `frontend/` |
 
@@ -131,7 +131,7 @@ Output of transcript parsing. Times are **local wall-clock** `HH:MM` when date i
 
 #### `GET /health`
 
-**Status:** ✅ Implemented on `samar`  
+**Status:** ✅ Implemented on `ingestion-timeline`  
 **Response:** `{ "ok": true }`
 
 ---
@@ -140,7 +140,7 @@ Output of transcript parsing. Times are **local wall-clock** `HH:MM` when date i
 
 #### `POST /api/events`
 
-**Status:** ✅ Implemented on `samar`  
+**Status:** ✅ Implemented on `ingestion-timeline`  
 **Owner:** Samar
 
 **Request body:** single [Raw activity event](#raw-activity-event) or `{ "events": [ ... ] }` for batch.
@@ -163,7 +163,7 @@ Output of transcript parsing. Times are **local wall-clock** `HH:MM` when date i
 
 #### `GET /api/timeline`
 
-**Status:** ✅ Implemented on `samar`  
+**Status:** ✅ Implemented on `ingestion-timeline`  
 **Owner:** Samar
 
 **Query params:**
@@ -230,8 +230,8 @@ Output of transcript parsing. Times are **local wall-clock** `HH:MM` when date i
 ## MVP checklist (integration order)
 
 1. ✅ Contract documented (this file)
-2. ✅ `POST /api/events` + Redis write (Samar — `samar`)
-3. ✅ `GET /api/timeline` + hour bucketing (Samar — `samar`)
+2. ✅ `POST /api/events` + Redis write (Samar — `ingestion-timeline`)
+3. ✅ `GET /api/timeline` + hour bucketing (Samar — `ingestion-timeline`)
 4. 🔲 `POST /api/transcribe` route wired to Deepgram (Allisonmini)
 5. ✅ `POST /api/schedule/parse` (on branch, needs merge)
 6. 🔲 Frontend timeline bar chart against `/api/timeline`

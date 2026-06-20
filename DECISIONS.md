@@ -87,7 +87,7 @@
 ## ADR-008 — Redis key pattern for raw events
 
 **Date:** 2025-06-20  
-**Status:** Accepted (implemented on `samar` branch)  
+**Status:** Accepted (implemented on `ingestion-timeline` branch)  
 **Decision:** Store JSON-serialized events in a Redis list at `activity:events:{userId}:{YYYY-MM-DD}`. In-memory `Map` fallback when `REDIS_URL` is unset.  
 **Consequences:** Allison's optional vector Redis usage is separate; no key collision today.
 

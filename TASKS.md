@@ -10,11 +10,11 @@
 
 | # | Priority | Task | Owner | Status | Branch |
 |---|----------|------|-------|--------|--------|
-| 1 | P0 | `POST /api/events` stores raw events in Redis | Samar | ✅ Done locally | `samar` |
-| 2 | P0 | Redis client + `events:{userId}:{date}` schema | Samar | ✅ Done locally | `samar` |
-| 3 | P0 | `GET /api/timeline` hour-by-hour blocks | Samar | ✅ Done locally | `samar` |
-| 4 | P0 | Demo timeline fallback + mock seed | Samar | ✅ Done locally | `samar` |
-| 5 | P0 | Commit & PR Samar slice → `main` | Samar | 🟡 Ready | `samar` |
+| 1 | P0 | `POST /api/events` stores raw events in Redis | Samar | ✅ Done | `ingestion-timeline` |
+| 2 | P0 | Redis client + `events:{userId}:{date}` schema | Samar | ✅ Done | `ingestion-timeline` |
+| 3 | P0 | `GET /api/timeline` hour-by-hour blocks | Samar | ✅ Done | `ingestion-timeline` |
+| 4 | P0 | Demo timeline fallback + mock seed | Samar | ✅ Done | `ingestion-timeline` |
+| 5 | P0 | PR ingestion slice → `main` | Samar | 🟡 Ready | `ingestion-timeline` |
 | 6 | P0 | PR Allison slice → `main` | Allisonmini | 🟡 Ready | `ai-pipeline` |
 | 7 | P0 | Merge `app.js` + `package.json` without conflicts | Foreman / shared | 🔲 Blocked on PRs | — |
 | 8 | P0 | `POST /api/transcribe` HTTP route | Allisonmini | 🔲 Not started | `ai-pipeline` |
@@ -28,7 +28,7 @@
 
 ## Samar — ingestion, storage & visualization
 
-**Branch:** `samar` (local, uncommitted)
+**Branch:** `ingestion-timeline`
 
 ### Done (local, not pushed)
 
@@ -42,13 +42,11 @@
 
 ### Next steps
 
-1. Commit and push `samar` branch.
-2. Open PR → `main` (Samar files only — do not touch `ai-pipeline`).
-3. After Allison PR merges, combine `app.js` routers; swap `categoryHint` → `categorizationService`.
+1. Open PR → `main` (Samar files only — do not touch `ai-pipeline`).
+2. After Allison PR merges, combine `app.js` routers; swap `categoryHint` → `categorizationService`.
 
 ### Blockers
 
-- Work uncommitted until pushed.
 - `app.js` / `package.json` conflict with `ai-pipeline` at merge time.
 
 ---
@@ -93,7 +91,7 @@
 
 ## Integration queue (recommended merge order)
 
-1. **Samar:** commit → push → PR `samar` → `main`
+1. **Samar:** PR `ingestion-timeline` → `main`
 2. **Allisonmini:** rebase `ai-pipeline` → add transcribe → PR
 3. **Foreman:** verify combined routes vs `API_CONTRACT.md`
 4. **Frontend:** branch when ready
@@ -113,7 +111,7 @@
 
 | Item | Severity | Notes |
 |------|----------|-------|
-| Samar work uncommitted | 🔴 High | Push `samar` so teammates can build |
+| Samar branch pushed | 🟢 Done | `ingestion-timeline` on origin |
 | Two parallel `server/` scaffolds | 🟡 Medium | `app.js` / `package.json` conflict at merge |
 | No `/api/transcribe` route | 🟡 Medium | Blocks live voice demo |
 | Frontend unassigned | 🟡 Medium | Demo timeline API ready for UI spike |

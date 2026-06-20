@@ -63,6 +63,6 @@ See `../API_CONTRACT.md` for full request/response shapes.
 
 ## Merge notes
 
-- Branch: `samar` (do not edit `ai-pipeline` / Allisonmini files).
+- Branch: `ingestion-timeline` (do not edit `ai-pipeline` / Allisonmini files).
 - When merging with `ai-pipeline`, combine `app.js` routers and reconcile
   `package.json`. Swap `categoryHint.js` for `categorizationService.js` imports.
