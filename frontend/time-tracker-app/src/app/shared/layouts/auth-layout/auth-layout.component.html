@@ -1,0 +1,20 @@
+<div class="auth-layout">
+  <aside class="auth-layout__hero">
+    <div class="auth-layout__hero-content">
+      <h1 class="auth-layout__headline">
+        {{ headline() }}
+        <span class="auth-layout__highlight">{{ highlight() }}</span>
+      </h1>
+      <p class="auth-layout__subtext">{{ subtext() }}</p>
+      <img
+        class="auth-layout__illustration"
+        [src]="illustrationSrc()"
+        [alt]="illustrationAlt()"
+      />
+    </div>
+  </aside>
+
+  <main class="auth-layout__form-panel">
+    <ng-content />
+  </main>
+</div>

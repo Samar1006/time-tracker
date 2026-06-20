@@ -1,0 +1,96 @@
+<app-auth-layout
+  headline="Start tracking. Stay focused."
+  highlight="Get things done."
+  subtext="Create your account and take control of your time like never before."
+  illustrationSrc="assets/auth/signup-illustration.png"
+  illustrationAlt="Stopwatch surrounded by productivity icons"
+>
+  <div class="signup-form">
+    <app-auth-form-header
+      title="Create your account"
+      subtitle="Sign up to get started with your time tracking"
+    />
+
+    <form [formGroup]="signupForm" (ngSubmit)="onSubmit()" class="signup-form__body">
+      <div class="form-field">
+        <label class="form-field__label" for="fullName">Full name</label>
+        <input
+          id="fullName"
+          type="text"
+          class="form-field__input"
+          formControlName="fullName"
+          placeholder="John Doe"
+          autocomplete="name"
+        />
+        @if (signupForm.controls.fullName.touched && signupForm.controls.fullName.hasError('required')) {
+          <span class="form-field__error">Full name is required</span>
+        }
+        @if (signupForm.controls.fullName.touched && signupForm.controls.fullName.hasError('minlength')) {
+          <span class="form-field__error">Name must be at least 2 characters</span>
+        }
+      </div>
+
+      <div class="form-field">
+        <label class="form-field__label" for="email">Email</label>
+        <input
+          id="email"
+          type="email"
+          class="form-field__input"
+          formControlName="email"
+          placeholder="you@example.com"
+          autocomplete="email"
+        />
+        @if (signupForm.controls.email.touched && signupForm.controls.email.hasError('required')) {
+          <span class="form-field__error">Email is required</span>
+        }
+        @if (signupForm.controls.email.touched && signupForm.controls.email.hasError('email')) {
+          <span class="form-field__error">Enter a valid email address</span>
+        }
+      </div>
+
+      <app-password-field
+        label="Password"
+        id="password"
+        formControlName="password"
+        hint="Must be at least 8 characters"
+        autocomplete="new-password"
+      >
+        @if (signupForm.controls.password.touched && signupForm.controls.password.hasError('required')) {
+          <span class="form-field__error">Password is required</span>
+        }
+        @if (signupForm.controls.password.touched && signupForm.controls.password.hasError('minlength')) {
+          <span class="form-field__error">Password must be at least 8 characters</span>
+        }
+      </app-password-field>
+
+      <app-password-field
+        label="Confirm password"
+        id="confirmPassword"
+        formControlName="confirmPassword"
+        autocomplete="new-password"
+      >
+        @if (signupForm.controls.confirmPassword.touched && signupForm.controls.confirmPassword.hasError('required')) {
+          <span class="form-field__error">Please confirm your password</span>
+        }
+        @if (passwordsMismatch) {
+          <span class="form-field__error">Passwords do not match</span>
+        }
+      </app-password-field>
+
+      <button type="submit" class="btn-primary">Sign up</button>
+
+      <div class="divider">
+        <span class="divider__line"></span>
+        <span class="divider__text">or</span>
+        <span class="divider__line"></span>
+      </div>
+
+      <app-google-sign-in-button (googleSignIn)="onGoogleSignIn()" />
+    </form>
+
+    <p class="signup-form__footer">
+      Already have an account?
+      <a routerLink="/login">Log in</a>
+    </p>
+  </div>
+</app-auth-layout>
