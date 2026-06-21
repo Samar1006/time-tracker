@@ -30,12 +30,26 @@
 
 ### Allisonmini — AI follow-ups
 
+> **Delegated by PR review agent (2026-06-21):** PR #6 reviewed — **REQUEST CHANGES**. Rebase required before merge. Do not use `ai-pipeline` (merged/deleted); work on **`voice-demo`** only.
+
 | Priority | Task | Status |
 |----------|------|--------|
 | P0 | `categoryHint` → `categorizationService` | ✅ Merged ([#5](https://github.com/Samar1006/time-tracker/pull/5)) |
-| P1 | Voice demo page `/demo` | 🟡 PR [#6](https://github.com/Samar1006/time-tracker/pull/6) — **rebase** onto `main` after #5 |
+| P1 | Voice demo page `/demo` | 🔴 PR [#6](https://github.com/Samar1006/time-tracker/pull/6) — **rebase + fix `app.js` conflict** |
 
 **Branch:** `voice-demo` for PR #6 only.
+
+**Your action items (PR #6):**
+
+1. `git checkout voice-demo && git fetch origin && git rebase origin/main`
+2. Resolve `server/src/app.js` — **keep both**:
+   - `app.use('/api/auth', authRouter)` (from `main`)
+   - `app.use('/demo', express.static(...))` (from your commit)
+3. `cd server && npm test` — must pass **30/30** (includes auth tests)
+4. `git push --force-with-lease origin voice-demo`
+5. Comment on PR #6 when ready; PR review agent will merge
+
+**Do not touch:** `frontend/time-tracker-app/` (Frontend team / `dj` branch).
 
 ---
 
@@ -52,7 +66,7 @@
 |--------|-----------|-----|--------|
 | `main` | — | — | 30 tests passing; categorizer swap merged |
 | `dj` | **+1 / −2** | none open yet | Frontend integration — **rebase then PR** |
-| `voice-demo` | +1 / behind | [#6](https://github.com/Samar1006/time-tracker/pull/6) open | Rebase onto `main` |
+| `voice-demo` | +1 / −8 | [#6](https://github.com/Samar1006/time-tracker/pull/6) open | **Allisonmini:** rebase + `app.js` conflict (see above) |
 | `categorizer-swap` | merged | [#5](https://github.com/Samar1006/time-tracker/pull/5) ✅ | Delete remote branch |
 | `auth-backend`, `ingestion-timeline`, `ai-pipeline` | merged | — | Safe to delete |
 
