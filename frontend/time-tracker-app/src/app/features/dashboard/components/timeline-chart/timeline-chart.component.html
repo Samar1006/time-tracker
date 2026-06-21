@@ -2,7 +2,7 @@
   <header class="timeline-card__header">
     <div>
       <h2 class="timeline-card__title">{{ displayTitle() }}</h2>
-      <p class="timeline-card__subtitle">Day view — activity positioned by clock time</p>
+      <p class="timeline-card__subtitle">Day view — time flows top to bottom</p>
     </div>
     <button type="button" class="timeline-card__info" aria-label="Timeline info">
       <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
@@ -13,52 +13,55 @@
     </button>
   </header>
 
-  <div class="hour-calendar">
+  <div class="day-calendar">
     @if (!hasActivity()) {
-      <p class="hour-calendar__empty">No activity logged for this day yet.</p>
+      <p class="day-calendar__empty">No activity logged for this day yet.</p>
     } @else {
-      <div class="hour-calendar__head">
-        <span class="hour-calendar__head-time">Hour</span>
-        <span class="hour-calendar__head-bar">Clock time</span>
-        <span class="hour-calendar__head-total">Tracked</span>
-      </div>
-
-      <div class="hour-calendar__rows">
-        @for (row of hourRows(); track row.hour) {
-          <div class="hour-calendar__row" [class.hour-calendar__row--idle]="row.totalTrackedSec === 0">
-            <span class="hour-calendar__label">{{ row.label }}</span>
-
-            <div class="hour-calendar__bar" role="list" [attr.aria-label]="row.label + ' activity'">
-              <div class="hour-calendar__grid" aria-hidden="true"></div>
-
-              @if (row.totalTrackedSec === 0) {
-                <span class="hour-calendar__unused hour-calendar__unused--full">No activity</span>
-              } @else {
-                @for (positioned of row.blocks; track blockTrackKey(positioned)) {
-                  <button
-                    type="button"
-                    class="hour-calendar__block"
-                    role="listitem"
-                    [style.left.%]="positioned.leftPct"
-                    [style.width.%]="positioned.widthPct"
-                    [style.top.%]="(positioned.lane / positioned.laneCount) * 100"
-                    [style.height.%]="100 / positioned.laneCount"
-                    [style.background]="categoryColor(positioned.block.category)"
-                    [class.hour-calendar__block--narrow]="positioned.widthPct < 12"
-                    (mouseenter)="showBlockTooltip(positioned, $event)"
-                    (mouseleave)="hideTooltip()"
-                    [attr.aria-label]="categoryLabels[positioned.block.category] + ', ' + formatTimeRange(positioned.block)"
-                  >
-                    <span class="hour-calendar__block-label">{{ categoryLabels[positioned.block.category] }}</span>
-                    <span class="hour-calendar__block-duration">{{ formatBlockDuration(positioned.block.durationSec) }}</span>
-                  </button>
-                }
-              }
+      <div class="day-calendar__scroll">
+        <div
+          class="day-calendar__canvas"
+          [style.height.px]="canvasHeightPx()"
+          role="list"
+          aria-label="Activity timeline"
+        >
+          @for (guide of hourGuides(); track guide.hour) {
+            <div class="day-calendar__hour" [style.top.%]="guide.topPct">
+              <span class="day-calendar__hour-label">{{ guide.label }}</span>
+              <div class="day-calendar__hour-line" aria-hidden="true"></div>
             </div>
+            @if (guide.hour < rangeEndHour()) {
+              <div
+                class="day-calendar__half-hour"
+                [style.top.%]="guide.topPct + halfHourStepPct()"
+                aria-hidden="true"
+              >
+                <div class="day-calendar__half-hour-line"></div>
+              </div>
+            }
+          }
 
-            <span class="hour-calendar__total">{{ formatBlockDuration(row.totalTrackedSec) }}</span>
-          </div>
-        }
+          @for (positioned of positionedBlocks(); track blockTrackKey(positioned)) {
+            <button
+              type="button"
+              class="day-calendar__event"
+              role="listitem"
+              [style.top.%]="positioned.topPct"
+              [style.height.%]="positioned.heightPct"
+              [style.left.%]="blockLeftPct(positioned)"
+              [style.width.%]="blockWidthPct(positioned)"
+              [style.background]="categoryColor(positioned.block.category)"
+              [class.day-calendar__event--compact]="positioned.heightPct < 2.5"
+              (mouseenter)="showBlockTooltip(positioned, $event)"
+              (mouseleave)="hideTooltip()"
+              [attr.aria-label]="categoryLabels[positioned.block.category] + ', ' + formatTimeRange(positioned.block)"
+            >
+              <span class="day-calendar__event-title">{{ positioned.block.activity }}</span>
+              <span class="day-calendar__event-meta">
+                {{ formatTimeRange(positioned.block) }}
+              </span>
+            </button>
+          }
+        </div>
       </div>
     }
   </div>
@@ -74,12 +77,12 @@
 
   @if (tooltip(); as tip) {
     <div
-      class="hour-calendar__tooltip"
+      class="day-calendar__tooltip"
       [style.left.px]="tip.x"
       [style.top.px]="tip.y"
     >
       <strong>{{ tip.category }}</strong> · {{ tip.duration }}
-      <span class="hour-calendar__tooltip-sub">{{ tip.timeRange }} · {{ tip.activity }}</span>
+      <span class="day-calendar__tooltip-sub">{{ tip.timeRange }} · {{ tip.activity }}</span>
     </div>
   }
 </section>
