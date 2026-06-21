@@ -20,6 +20,8 @@ import {
 const MIN_DURATION_SEC = 15 * 60;
 const MUTABLE_TYPES = new Set(['voice', 'manual']);
 const GENERIC_TARGETS = new Set(['it', 'that', 'this', 'the event', 'the block']);
+const MOVE_VERB_RE = /\b(?:move|moved|moving|reschedule|rescheduled|rescheduling|shift|shifted|shifting)\b/;
+const EDIT_VERB_RE = /\b(?:push|move|moved|moving|shift|shorten|extend|cancel|cancelled|canceled|delete|deleted|remove|removed|reschedule|rescheduled|delay|delayed|postpone|postponed)\b/;
 
 /** @typedef {{ lastEventId?: string, lastTargetActivity?: string, lastStorageDate?: string }} VoiceMutationContext */
 
@@ -31,26 +33,28 @@ export function isMutationTranscript(transcript, context = null) {
   if (/\b(?:from|between)\s+.+\s+(?:to|until|till)\s+(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|\d)/.test(t)) {
     return false;
   }
-  if (/\b(?:i\s+)?(?:worked|studied|slept|ate|had|went|spent)\b/.test(t) && !/\b(?:push|move|shorten|reschedule|delay)\s+(?:my|it|that|this)\b/.test(t)) {
+  if (/\b(?:i\s+)?(?:worked|studied|slept|ate|had|went|spent)\b/.test(t) && !EDIT_VERB_RE.test(t)) {
     return false;
   }
 
   const hasContext = Boolean(context?.lastEventId || context?.lastTargetActivity);
   if (hasContext) {
-    if (/\b(?:actually|instead|wait|sorry|no|okay)\b/.test(t) && /\b(?:push|shift|move|shorten|extend|delay|reschedule)\b/.test(t)) {
+    if (/\b(?:actually|instead|wait|sorry|no|okay)\b/.test(t) && EDIT_VERB_RE.test(t)) {
       return true;
     }
-    if (/\b(?:push|move|shift|shorten|extend|cancel|delete|remove)\s+(?:it|that|this)\b/.test(t)) return true;
+    if (/\b(?:push|move|moved|moving|shift|shorten|extend|cancel|delete|remove|reschedule|rescheduled)\s+(?:it|that|this)\b/.test(t)) {
+      return true;
+    }
     if (/\b(?:one|two|three|\d+)\s+more\s+hours?\b/.test(t) && /\b(?:back|later|forward|earlier)\b/.test(t)) {
       return true;
     }
   }
 
   return (
-    /\b(?:push|delay|postpone|reschedule|shift)\b/.test(t)
-    || /\bmove\s+(?:my\s+)?(?:\w+|it|that|this)\b/.test(t)
+    /\b(?:push|delay|postpone|postponed|reschedule|rescheduled|shift|shifted)\b/.test(t)
+    || MOVE_VERB_RE.test(t)
     || /\b(?:shorten|reduce|cut|extend|lengthen)\s+(?:my\s+)?(?:\w+|it|that|this)\b/.test(t)
-    || /\b(?:cancel|delete|remove|drop)\s+(?:the|my|it|that|this|\w+)/.test(t)
+    || /\b(?:cancel|cancelled|canceled|delete|deleted|remove|removed|drop|dropped)\s+(?:the|my|it|that|this|\w+)/.test(t)
     || /\bclear\s+(?:my\s+)?(?:schedule|calendar|plan|day|timeline)\b/.test(t)
   );
 }
@@ -116,7 +120,7 @@ export function parseClearScheduleDay(transcript, referenceDate, viewDate) {
 /** Parse the destination day (and optional start time) after "to" in move/reschedule commands. */
 export function extractMoveDestination(transcript, referenceDate) {
   const t = transcript.trim();
-  const moveRe = /\b(?:move|reschedule|shift)\s+(?:(?:my|the|a|an)\s+)?(?:(?:\w+\s+){0,4}\w+\s+|(?:it|that|this)\s+)??to\s+(.+)$/i;
+  const moveRe = /\b(?:move|moved|moving|reschedule|rescheduled|rescheduling|shift|shifted|shifting)\s+(?:(?:my|the|a|an)\s+)?(?:(?:\w+\s+){0,4}\w+\s+|(?:it|that|this)\s+)??to\s+(.+)$/i;
   const m = t.match(moveRe);
   if (!m?.[1]) return null;
 
@@ -124,8 +128,10 @@ export function extractMoveDestination(transcript, referenceDate) {
   if (!dest) return null;
 
   let startMin = null;
+  let startHadAmPm = false;
   const atTime = dest.match(/\bat\s+(.+)$/i);
   if (atTime) {
+    startHadAmPm = /\b(?:am|pm)\b/i.test(atTime[1]);
     startMin = parseSpokenClock(atTime[1]);
     dest = dest.slice(0, atTime.index).trim();
   }
@@ -135,7 +141,7 @@ export function extractMoveDestination(transcript, referenceDate) {
   const datePart = dest || String(referenceDate instanceof Date ? toDateISO(referenceDate) : referenceDate).slice(0, 10);
   const calendar = resolveCalendarDate(datePart, referenceDate);
   if (calendar?.date) {
-    return { date: calendar.date, startMin };
+    return { date: calendar.date, startMin, startHadAmPm };
   }
 
   const day = resolveDayFromSegment(datePart, referenceDate, null);
@@ -148,7 +154,7 @@ export function extractMoveDestination(transcript, referenceDate) {
 
   if (!hasExplicitDay && startMin == null) return null;
 
-  return { date: day.date, startMin };
+  return { date: day.date, startMin, startHadAmPm };
 }
 
 /**
@@ -158,6 +164,7 @@ export function extractMoveDestination(transcript, referenceDate) {
  *   deltaMin: number | null,
  *   newDate: string | null,
  *   newStartMin: number | null,
+ *   startHadAmPm: boolean,
  *   clearDate: string | null,
  *   direction: 1 | -1,
  * } | null}
@@ -206,6 +213,7 @@ export function parseMutationTranscript(transcript, referenceDate = new Date(), 
       deltaMin: null,
       newDate: moveDest.date,
       newStartMin: moveDest.startMin,
+      startHadAmPm: moveDest.startHadAmPm ?? false,
       clearDate: null,
       direction: 1,
     };
@@ -305,6 +313,32 @@ function scoreEventMatch(event, targetActivity, viewDate, timeZone, context) {
   return score;
 }
 
+function effectiveDurationSec(event, timeZone) {
+  const { durationSec } = eventInterval(event);
+  if (durationSec > 0) return durationSec;
+
+  const localDate = parseDateOnly(event.metadata?.localDate) ?? parseDateOnly(event.timestamp);
+  const endLocalDate = parseDateOnly(event.metadata?.endLocalDate) ?? localDate;
+  if (localDate && endLocalDate && event.metadata?.endTime) {
+    const startMin = localMinutesFromTimestamp(event.timestamp, timeZone);
+    const endMin = parseSpokenClock(String(event.metadata.endTime));
+    if (endMin != null && endMin > startMin) {
+      return (endMin - startMin) * 60;
+    }
+  }
+
+  return 3600;
+}
+
+function inferBareHourStartMin(newStartMin, referenceStartMin, startHadAmPm) {
+  if (newStartMin == null || startHadAmPm) return newStartMin;
+  const hour = Math.floor(newStartMin / 60);
+  if (hour >= 1 && hour <= 11 && referenceStartMin >= 12 * 60) {
+    return newStartMin + 12 * 60;
+  }
+  return newStartMin;
+}
+
 function localMinutesFromTimestamp(iso, timeZone) {
   const parts = new Intl.DateTimeFormat('en-US', {
     timeZone,
@@ -357,15 +391,18 @@ function wallClockToIso(date, minutesSinceMidnight, timeZone) {
   return localTimestamp(date, minutesSinceMidnight);
 }
 
-function applyMoveDate(event, newDate, timeZone, newStartMin = null) {
+function applyMoveDate(event, newDate, timeZone, newStartMin = null, startHadAmPm = false) {
   if (!newDate) return event;
 
-  const durationSec = Number(event.durationSec) > 0 ? Number(event.durationSec) : 3600;
-  const startMin = newStartMin ?? localMinutesFromTimestamp(event.timestamp, timeZone);
+  const durationSec = effectiveDurationSec(event, timeZone);
+  const referenceStartMin = localMinutesFromTimestamp(event.timestamp, timeZone);
+  const resolvedStartMin = newStartMin == null
+    ? referenceStartMin
+    : inferBareHourStartMin(newStartMin, referenceStartMin, startHadAmPm);
 
   const next = {
     ...event,
-    timestamp: wallClockToIso(newDate, startMin, timeZone),
+    timestamp: wallClockToIso(newDate, resolvedStartMin, timeZone),
     durationSec,
     metadata: {
       ...(event.metadata ?? {}),
@@ -373,7 +410,7 @@ function applyMoveDate(event, newDate, timeZone, newStartMin = null) {
     },
   };
 
-  const endMin = startMin + durationSec / 60;
+  const endMin = resolvedStartMin + durationSec / 60;
   if (endMin > 24 * 60) {
     next.metadata.endLocalDate = addDaysISO(newDate, 1);
   } else {
@@ -390,17 +427,19 @@ function applyResize(event, deltaMin, direction, timeZone) {
   return syncOvernightMetadata(next, timeZone);
 }
 
-async function loadCandidateEvents(userId, viewDate, timeZone, context = null) {
-  const dates = new Set([
-    addDaysISO(viewDate, -1),
-    viewDate,
-    addDaysISO(viewDate, 1),
-    addDaysISO(viewDate, 7),
-    addDaysISO(viewDate, 14),
-  ]);
-
+async function loadCandidateEvents(userId, viewDate, timeZone, context = null, mutation = null) {
+  const dates = new Set();
+  for (let offset = -14; offset <= 14; offset += 1) {
+    dates.add(addDaysISO(viewDate, offset));
+  }
   if (context?.lastStorageDate) {
     dates.add(context.lastStorageDate);
+    for (let offset = -14; offset <= 14; offset += 1) {
+      dates.add(addDaysISO(context.lastStorageDate, offset));
+    }
+  }
+  if (mutation?.newDate) {
+    dates.add(mutation.newDate);
   }
 
   const byId = new Map();
@@ -408,13 +447,18 @@ async function loadCandidateEvents(userId, viewDate, timeZone, context = null) {
   for (const date of dates) {
     const dayEvents = await loadEvents(userId, date);
     for (const event of dayEvents) {
+      if (!MUTABLE_TYPES.has(event.type)) continue;
+
       if (context?.lastEventId && event.id === context.lastEventId) {
         byId.set(event.id, { event, storageDate: date });
         continue;
       }
-      if (MUTABLE_TYPES.has(event.type) && eventOverlapsLocalDate(event, viewDate, timeZone)) {
-        byId.set(event.id, { event, storageDate: date });
-      } else if (MUTABLE_TYPES.has(event.type) && date === viewDate) {
+
+      if (
+        eventOverlapsLocalDate(event, viewDate, timeZone)
+        || date === viewDate
+        || mutation?.action === 'move_date'
+      ) {
         byId.set(event.id, { event, storageDate: date });
       }
     }
@@ -481,7 +525,7 @@ export async function applyScheduleMutation({
     };
   }
 
-  const candidates = await loadCandidateEvents(userId, day, timeZone, voiceContext);
+  const candidates = await loadCandidateEvents(userId, day, timeZone, voiceContext, mutation);
 
   if (candidates.length === 0) {
     return { applied: false, intent: 'mutate', reason: 'no_events_to_edit' };
@@ -524,7 +568,13 @@ export async function applyScheduleMutation({
 
   let updated;
   if (mutation.action === 'move_date') {
-    updated = applyMoveDate(match.event, mutation.newDate, timeZone, mutation.newStartMin);
+    updated = applyMoveDate(
+      match.event,
+      mutation.newDate,
+      timeZone,
+      mutation.newStartMin,
+      mutation.startHadAmPm,
+    );
   } else if (mutation.action === 'resize') {
     updated = applyResize(match.event, mutation.deltaMin ?? 60, mutation.direction, timeZone);
   } else {
@@ -537,6 +587,7 @@ export async function applyScheduleMutation({
     voiceContext?.lastStorageDate,
     mutation.newDate,
     eventStorageDate(match.event),
+    eventStorageDate(updated),
   ].filter(Boolean);
 
   const saved = await replaceEvent(

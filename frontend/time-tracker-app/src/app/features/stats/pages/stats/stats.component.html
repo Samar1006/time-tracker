@@ -51,53 +51,73 @@
     </section>
 
     <section class="stats-panel">
-      <h2 class="stats-panel__title">
-        @switch (period()) {
-          @case ('day') { Today }
-          @case ('week') { This week }
-          @case ('month') { This month }
+      <div class="stats-panel__head">
+        <h2 class="stats-panel__title">
+          @switch (period()) {
+            @case ('day') { {{ selectedDayLabel() }} }
+            @case ('week') { This week }
+            @case ('month') { This month }
+          }
+          — {{ periodTotal() }} tracked
+        </h2>
+
+        @if (period() === 'day') {
+          <div class="stats-day-nav">
+            <button
+              type="button"
+              class="stats-day-nav__btn"
+              aria-label="Previous day"
+              (click)="previousDay()"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <polyline points="15 18 9 12 15 6" />
+              </svg>
+            </button>
+
+            <label class="stats-day-nav__picker">
+              <span class="stats-day-nav__picker-label">{{ selectedDayLabel() }}</span>
+              <input
+                class="stats-day-nav__input"
+                type="date"
+                [value]="selectedDay()"
+                (change)="onDateInput($event)"
+                aria-label="Choose date"
+              />
+            </label>
+
+            <button
+              type="button"
+              class="stats-day-nav__btn"
+              aria-label="Next day"
+              (click)="nextDay()"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <polyline points="9 18 15 12 9 6" />
+              </svg>
+            </button>
+
+            @if (!isSelectedToday()) {
+              <button type="button" class="stats-day-nav__today" (click)="goToToday()">
+                Today
+              </button>
+            }
+          </div>
         }
-        — {{ periodTotal() }} tracked
-      </h2>
+      </div>
 
-      @if (categoryBreakdown().length === 0) {
-        <p class="stats-empty">No activity data for this period yet.</p>
-      } @else {
-        <div class="stats-breakdown">
-          <h3 class="stats-breakdown__heading">Time by category</h3>
-          <ul class="stats-breakdown__list">
-            @for (item of categoryBreakdown(); track item.category) {
-              <li class="stats-breakdown__item">
-                <div class="stats-breakdown__label-row">
-                  <span class="stats-breakdown__dot" [style.background]="categoryColors[item.category]"></span>
-                  <span class="stats-breakdown__label">{{ item.label }}</span>
-                  <span class="stats-breakdown__value">{{ item.percent.toFixed(0) }}%</span>
-                  <span class="stats-breakdown__duration">{{ formatDuration(item.seconds) }}</span>
-                </div>
-                <div class="stats-breakdown__bar-track">
-                  <div
-                    class="stats-breakdown__bar-fill"
-                    [style.width.%]="item.percent"
-                    [style.background]="categoryColors[item.category]"
-                  ></div>
-                </div>
-              </li>
-            }
-          </ul>
-        </div>
-
-        <div class="stats-top">
-          <h3 class="stats-top__heading">Top activities</h3>
-          <ul class="stats-top__list">
-            @for (item of topActivities(); track item.activity) {
-              <li class="stats-top__item">
-                <span class="stats-top__name">{{ item.activity }}</span>
-                <span class="stats-top__duration">{{ formatDuration(item.seconds) }}</span>
-              </li>
-            }
-          </ul>
-        </div>
-      }
+      <div class="stats-donut-section">
+        <h3 class="stats-donut-section__heading">
+          @switch (period()) {
+            @case ('day') { Share of the day by activity }
+            @case ('week') { Share of the week by activity }
+            @case ('month') { Share of the month by activity }
+          }
+        </h3>
+        @if (hasOnlyUntracked()) {
+          <p class="stats-empty">No activity tracked for this period — the chart shows 100% untracked time.</p>
+        }
+        <app-activity-donut-chart [slices]="activityDonutSlices()" />
+      </div>
     </section>
   }
 </app-shell>

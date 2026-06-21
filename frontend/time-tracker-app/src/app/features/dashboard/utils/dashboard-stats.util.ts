@@ -1,5 +1,5 @@
 import { ActivityCategory, TimelineHour, TimelineResponse } from '../../../core/models/timeline.model';
-import { CATEGORY_LABELS } from '../../../core/constants/categories';
+import { CATEGORY_COLORS, CATEGORY_LABELS } from '../../../core/constants/categories';
 import { formatDuration } from '../../../core/utils/duration.util';
 
 export function hasLiveTrackedData(timeline: TimelineResponse | null): boolean {
@@ -140,6 +140,105 @@ export interface CategoryBreakdownItem {
 export interface TopActivityItem {
   activity: string;
   seconds: number;
+}
+
+export interface ActivityDonutSlice {
+  label: string;
+  seconds: number;
+  percent: number;
+  color: string;
+}
+
+export const SECONDS_PER_DAY = 24 * 60 * 60;
+export const UNTRACKED_SLICE_COLOR = '#d1d5db';
+
+const ACTIVITY_PALETTE = [
+  '#6366f1',
+  '#3b82f6',
+  '#22c55e',
+  '#ec4899',
+  '#f97316',
+  '#8b5cf6',
+  '#14b8a6',
+  '#eab308',
+  '#ef4444',
+  '#06b6d4'
+];
+
+export function daysInCalendarMonth(referenceDate = new Date()): number {
+  const year = referenceDate.getFullYear();
+  const month = referenceDate.getMonth();
+  return new Date(year, month + 1, 0).getDate();
+}
+
+export function computeActivityDonutSlices(
+  timelines: TimelineResponse[],
+  periodDayCount: number
+): ActivityDonutSlice[] {
+  const periodCapacitySec = periodDayCount * SECONDS_PER_DAY;
+  if (periodCapacitySec <= 0) {
+    return [];
+  }
+
+  const activityTotals = new Map<string, number>();
+  const activityCategories = new Map<string, Map<ActivityCategory, number>>();
+
+  for (const timeline of timelines) {
+    for (const hour of timeline.hours) {
+      for (const block of hour.blocks) {
+        activityTotals.set(
+          block.activity,
+          (activityTotals.get(block.activity) ?? 0) + block.durationSec
+        );
+
+        const categories = activityCategories.get(block.activity) ?? new Map();
+        categories.set(block.category, (categories.get(block.category) ?? 0) + block.durationSec);
+        activityCategories.set(block.activity, categories);
+      }
+    }
+  }
+
+  const trackedSec = [...activityTotals.values()].reduce((sum, seconds) => sum + seconds, 0);
+  const slices: ActivityDonutSlice[] = [];
+
+  const activities = [...activityTotals.entries()].sort((a, b) => b[1] - a[1]);
+  activities.forEach(([activity, seconds], index) => {
+    const categories = activityCategories.get(activity);
+    let dominantCategory: ActivityCategory | null = null;
+    let dominantSec = 0;
+    if (categories) {
+      for (const [category, categorySec] of categories.entries()) {
+        if (categorySec > dominantSec) {
+          dominantCategory = category;
+          dominantSec = categorySec;
+        }
+      }
+    }
+
+    const color =
+      dominantCategory != null
+        ? CATEGORY_COLORS[dominantCategory]
+        : ACTIVITY_PALETTE[index % ACTIVITY_PALETTE.length];
+
+    slices.push({
+      label: activity,
+      seconds,
+      percent: (seconds / periodCapacitySec) * 100,
+      color
+    });
+  });
+
+  const untrackedSec = Math.max(0, periodCapacitySec - trackedSec);
+  if (untrackedSec > 0 || slices.length === 0) {
+    slices.push({
+      label: 'untracked',
+      seconds: untrackedSec,
+      percent: (untrackedSec / periodCapacitySec) * 100,
+      color: UNTRACKED_SLICE_COLOR
+    });
+  }
+
+  return slices;
 }
 
 export function aggregateTimelineSeconds(timelines: TimelineResponse[]): number {

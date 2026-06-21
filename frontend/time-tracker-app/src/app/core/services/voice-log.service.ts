@@ -192,10 +192,17 @@ export class VoiceLogService {
         if (err.status === 422 && err.error?.intent === 'create') {
           return null;
         }
+        if (err.status === 422 && err.error?.intent === 'mutate') {
+          throw new Error(
+            err.error?.reason === 'ambiguous_target'
+              ? 'Could not tell which event to update. Name it, e.g. "move my meeting to Friday".'
+              : 'Could not update that event on the timeline.',
+          );
+        }
         if (err.status === 404) {
           throw new Error(
             err.error?.reason === 'no_matching_event'
-              ? 'Could not find a matching event to remove. Try naming it, e.g. "my meeting".'
+              ? 'Could not find a matching event to update. Try naming it, e.g. "my meeting".'
               : 'No events on this day to update.',
           );
         }

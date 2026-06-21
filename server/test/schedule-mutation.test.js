@@ -55,6 +55,16 @@ describe('scheduleMutationService', () => {
     assert.equal(m?.action, 'move_date');
     assert.equal(m?.newDate, '2026-06-23');
     assert.equal(m?.newStartMin, 14 * 60);
+    assert.equal(m?.startHadAmPm, true);
+  });
+
+  it('detects past-tense move commands', () => {
+    const ctx = { lastEventId: 'evt_1', lastTargetActivity: 'meeting' };
+    assert.equal(isMutationTranscript('Moved it to June 23rd at 5 pm', ctx), true);
+    const m = parseMutationTranscript('Moved it to June 23rd at 5 pm', REF, ctx);
+    assert.equal(m?.action, 'move_date');
+    assert.equal(m?.newDate, '2026-06-23');
+    assert.equal(m?.newStartMin, 17 * 60);
   });
 
   it('parses move to next Friday at 9 am', () => {
@@ -331,6 +341,46 @@ describe('scheduleMutationService', () => {
     assert.equal(result.applied, true);
     assert.equal(await loadEvents(USER, VIEW).then((e) => e.length), 0);
     assert.equal(await loadEvents(USER, '2026-06-26').then((e) => e.length), 1);
+  });
+
+  it('moves across days via past tense and keeps one-hour duration at inferred pm time', async () => {
+    resetMemoryStore();
+    await appendEvents(USER, VIEW, [{
+      id: 'evt_meeting',
+      userId: USER,
+      timestamp: `${VIEW}T22:00:00.000Z`,
+      type: 'voice',
+      title: 'meeting',
+      durationSec: 3600,
+      metadata: { localDate: VIEW, category: 'communication' },
+    }]);
+
+    const first = await applyScheduleMutation({
+      userId: USER,
+      transcript: 'Move my meeting to tomorrow',
+      referenceDate: REF,
+      viewDate: VIEW,
+      timeZone: 'UTC',
+    });
+    assert.equal(first.applied, true);
+    assert.equal(await loadEvents(USER, VIEW).then((e) => e.length), 0);
+    assert.equal(await loadEvents(USER, '2026-06-21').then((e) => e.length), 1);
+
+    const second = await applyScheduleMutation({
+      userId: USER,
+      transcript: 'Moved it to June 23rd at 5',
+      referenceDate: REF,
+      viewDate: '2026-06-21',
+      timeZone: 'UTC',
+      voiceContext: first.voiceContext,
+    });
+
+    assert.equal(second.applied, true);
+    assert.equal(await loadEvents(USER, '2026-06-21').then((e) => e.length), 0);
+    const moved = await loadEvents(USER, '2026-06-23');
+    assert.equal(moved.length, 1);
+    assert.equal(moved[0].durationSec, 3600);
+    assert.equal(moved[0].timestamp, '2026-06-23T17:00:00.000Z');
   });
 
   it('follow-up command reuses last event from voice context', async () => {

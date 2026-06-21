@@ -91,16 +91,17 @@ export async function findEventOnDay(userId, date, eventId) {
 }
 
 function buildSearchDates(storageDateHint, updatedEvent, extraDates = []) {
-  const anchor = storageDateHint ?? eventStorageDate(updatedEvent);
-  const dates = new Set([
-    anchor,
+  const seeds = new Set([
+    storageDateHint,
     eventStorageDate(updatedEvent),
     ...extraDates,
   ].filter(Boolean));
 
-  if (anchor) {
+  const dates = new Set();
+  for (const seed of seeds) {
+    dates.add(seed);
     for (let offset = -14; offset <= 14; offset += 1) {
-      dates.add(addDaysISO(anchor, offset));
+      dates.add(addDaysISO(seed, offset));
     }
   }
 
