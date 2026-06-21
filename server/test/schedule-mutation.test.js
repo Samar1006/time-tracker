@@ -17,6 +17,8 @@ describe('scheduleMutationService', () => {
     assert.equal(isMutationTranscript('Push my meeting back by an hour'), true);
     assert.equal(isMutationTranscript('Move my meeting to tomorrow'), true);
     assert.equal(isMutationTranscript('Shorten my meeting by an hour'), true);
+    assert.equal(isMutationTranscript('Cancel the meeting I have today'), true);
+    assert.equal(isMutationTranscript('Clear my schedule today'), true);
     assert.equal(isMutationTranscript('From 9 to 10 AM I worked on the dashboard'), false);
     assert.equal(isMutationTranscript('I slept from 11 pm to 6 am'), false);
   });
@@ -80,6 +82,82 @@ describe('scheduleMutationService', () => {
     assert.equal(m?.action, 'resize');
     assert.equal(m?.deltaMin, 60);
     assert.equal(m?.direction, -1);
+  });
+
+  it('parses cancel meeting today', () => {
+    assert.equal(isMutationTranscript('Cancel the meeting I have today'), true);
+    const m = parseMutationTranscript('Cancel the meeting I have today', REF);
+    assert.equal(m?.action, 'cancel');
+    assert.equal(m?.targetActivity, 'meeting');
+  });
+
+  it('parses clear my schedule today', () => {
+    const m = parseMutationTranscript('Clear my schedule today', REF, null, VIEW);
+    assert.equal(m?.action, 'clear_schedule');
+    assert.equal(m?.clearDate, VIEW);
+  });
+
+  it('cancels a matching voice event', async () => {
+    resetMemoryStore();
+    await appendEvents(USER, VIEW, [{
+      id: 'evt_meeting',
+      userId: USER,
+      timestamp: `${VIEW}T15:00:00.000Z`,
+      type: 'voice',
+      title: 'meeting',
+      durationSec: 3600,
+      metadata: { localDate: VIEW, category: 'communication' },
+    }]);
+
+    const result = await applyScheduleMutation({
+      userId: USER,
+      transcript: 'Cancel the meeting I have today',
+      referenceDate: REF,
+      viewDate: VIEW,
+      timeZone: 'UTC',
+    });
+
+    assert.equal(result.applied, true);
+    assert.equal(result.operation?.action, 'cancel');
+    assert.equal(await loadEvents(USER, VIEW).then((e) => e.length), 0);
+    assert.equal(result.voiceContext, null);
+  });
+
+  it('clears all voice events on the viewed day', async () => {
+    resetMemoryStore();
+    await appendEvents(USER, VIEW, [
+      {
+        id: 'evt_meeting',
+        userId: USER,
+        timestamp: `${VIEW}T15:00:00.000Z`,
+        type: 'voice',
+        title: 'meeting',
+        durationSec: 3600,
+        metadata: { localDate: VIEW },
+      },
+      {
+        id: 'evt_lunch',
+        userId: USER,
+        timestamp: `${VIEW}T12:00:00.000Z`,
+        type: 'voice',
+        title: 'lunch',
+        durationSec: 3600,
+        metadata: { localDate: VIEW },
+      },
+    ]);
+
+    const result = await applyScheduleMutation({
+      userId: USER,
+      transcript: 'Clear my schedule today',
+      referenceDate: REF,
+      viewDate: VIEW,
+      timeZone: 'UTC',
+    });
+
+    assert.equal(result.applied, true);
+    assert.equal(result.operation?.action, 'clear_schedule');
+    assert.equal(result.operation?.deletedCount, 2);
+    assert.equal(await loadEvents(USER, VIEW).then((e) => e.length), 0);
   });
 
   it('applies push back to a stored voice event', async () => {

@@ -80,7 +80,7 @@
               [style.left.%]="blockLeftPct(positioned)"
               [style.width.%]="blockWidthPct(positioned)"
               [style.background]="categoryColor(positioned.block.category)"
-              [class.day-calendar__event--compact]="positioned.heightPct < 2.5"
+              [class.day-calendar__event--compact]="blockIsCompact(positioned)"
               [class.day-calendar__event--continues-next-day]="blockContinuesNextDay(positioned.block)"
               [class.day-calendar__event--continues-prev-day]="blockContinuesFromPrevDay(positioned.block)"
               (mouseenter)="showBlockTooltip(positioned, $event)"

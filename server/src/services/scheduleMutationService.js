@@ -7,7 +7,7 @@ import {
   eventOverlapsLocalDate,
   parseDateOnly,
 } from './aggregationService.js';
-import { loadEvents, replaceEvent, eventStorageDate } from './activityStore.js';
+import { loadEvents, replaceEvent, eventStorageDate, deleteEventEverywhere } from './activityStore.js';
 import { localTimestamp } from '../utils/voiceBlockConversion.js';
 import {
   extractDurationMinutes,
@@ -40,7 +40,7 @@ export function isMutationTranscript(transcript, context = null) {
     if (/\b(?:actually|instead|wait|sorry|no|okay)\b/.test(t) && /\b(?:push|shift|move|shorten|extend|delay|reschedule)\b/.test(t)) {
       return true;
     }
-    if (/\b(?:push|move|shift|shorten|extend)\s+(?:it|that|this)\b/.test(t)) return true;
+    if (/\b(?:push|move|shift|shorten|extend|cancel|delete|remove)\s+(?:it|that|this)\b/.test(t)) return true;
     if (/\b(?:one|two|three|\d+)\s+more\s+hours?\b/.test(t) && /\b(?:back|later|forward|earlier)\b/.test(t)) {
       return true;
     }
@@ -50,6 +50,8 @@ export function isMutationTranscript(transcript, context = null) {
     /\b(?:push|delay|postpone|reschedule|shift)\b/.test(t)
     || /\bmove\s+(?:my\s+)?(?:\w+|it|that|this)\b/.test(t)
     || /\b(?:shorten|reduce|cut|extend|lengthen)\s+(?:my\s+)?(?:\w+|it|that|this)\b/.test(t)
+    || /\b(?:cancel|delete|remove|drop)\s+(?:the|my|it|that|this|\w+)/.test(t)
+    || /\bclear\s+(?:my\s+)?(?:schedule|calendar|plan|day|timeline)\b/.test(t)
   );
 }
 
@@ -86,7 +88,32 @@ function extractTargetActivity(transcript) {
   return null;
 }
 
-/** Parse destination day (and optional start time) after "to" in move/reschedule commands. */
+function extractCancelTarget(transcript) {
+  const t = transcript.trim();
+  if (/\b(?:cancel|delete|remove|drop)\s+(?:it|that|this)\b/i.test(t)) {
+    return null;
+  }
+  const m = t.match(
+    /\b(?:cancel|delete|remove|drop)\s+(?:(?:the|my|a|an)\s+)?(.+?)(?:\s+i\s+have)?(?:\s+(?:today|tomorrow|yesterday))?(?:[.!?]|$)/i,
+  );
+  if (!m?.[1]) return null;
+  const cleaned = stripTargetPhrase(m[1]);
+  return cleaned.length >= 2 ? cleaned : null;
+}
+
+/** Day to clear for "clear my schedule today" (defaults to viewed day). */
+export function parseClearScheduleDay(transcript, referenceDate, viewDate) {
+  if (!/\bclear\s+(?:my\s+)?(?:schedule|calendar|plan|day|timeline)\b/i.test(transcript)) {
+    return null;
+  }
+  const dayWord = transcript.match(/\b(?:today|tomorrow|yesterday)\b/i);
+  if (dayWord) {
+    return resolveDayFromSegment(dayWord[0], referenceDate, null)?.date ?? null;
+  }
+  return viewDate ?? toDateISO(referenceDate);
+}
+
+/** Parse the destination day (and optional start time) after "to" in move/reschedule commands. */
 export function extractMoveDestination(transcript, referenceDate) {
   const t = transcript.trim();
   const moveRe = /\b(?:move|reschedule|shift)\s+(?:(?:my|the|a|an)\s+)?(?:(?:\w+\s+){0,4}\w+\s+|(?:it|that|this)\s+)??to\s+(.+)$/i;
@@ -126,19 +153,48 @@ export function extractMoveDestination(transcript, referenceDate) {
 
 /**
  * @returns {{
- *   action: 'shift_start' | 'move_date' | 'resize',
+ *   action: 'shift_start' | 'move_date' | 'resize' | 'cancel' | 'clear_schedule',
  *   targetActivity: string | null,
  *   deltaMin: number | null,
  *   newDate: string | null,
  *   newStartMin: number | null,
+ *   clearDate: string | null,
  *   direction: 1 | -1,
  * } | null}
  */
-export function parseMutationTranscript(transcript, referenceDate = new Date(), context = null) {
+export function parseMutationTranscript(transcript, referenceDate = new Date(), context = null, viewDate = null) {
   if (!isMutationTranscript(transcript, context)) return null;
 
   const t = transcript.trim();
   const lower = t.toLowerCase();
+  const viewDefault = viewDate ?? toDateISO(referenceDate instanceof Date ? referenceDate : new Date(referenceDate));
+
+  const clearDate = parseClearScheduleDay(t, referenceDate, viewDefault);
+  if (clearDate) {
+    return {
+      action: 'clear_schedule',
+      targetActivity: null,
+      deltaMin: null,
+      newDate: null,
+      newStartMin: null,
+      clearDate,
+      direction: 1,
+    };
+  }
+
+  const cancelTarget = extractCancelTarget(t);
+  if (/\b(?:cancel|delete|remove|drop)\b/i.test(lower)) {
+    return {
+      action: 'cancel',
+      targetActivity: resolveTargetActivity(cancelTarget, context),
+      deltaMin: null,
+      newDate: null,
+      newStartMin: null,
+      clearDate: null,
+      direction: 1,
+    };
+  }
+
   const extractedTarget = extractTargetActivity(t);
   const targetActivity = resolveTargetActivity(extractedTarget, context);
 
@@ -150,6 +206,7 @@ export function parseMutationTranscript(transcript, referenceDate = new Date(), 
       deltaMin: null,
       newDate: moveDest.date,
       newStartMin: moveDest.startMin,
+      clearDate: null,
       direction: 1,
     };
   }
@@ -163,6 +220,8 @@ export function parseMutationTranscript(transcript, referenceDate = new Date(), 
       targetActivity,
       deltaMin,
       newDate: null,
+      newStartMin: null,
+      clearDate: null,
       direction: extend ? 1 : -1,
     };
   }
@@ -177,8 +236,35 @@ export function parseMutationTranscript(transcript, referenceDate = new Date(), 
     targetActivity,
     deltaMin,
     newDate: null,
+    newStartMin: null,
+    clearDate: null,
     direction,
   };
+}
+
+function buildSearchDatesForEvent(storageDateHint, event, extraDates = []) {
+  return [
+    storageDateHint,
+    eventStorageDate(event),
+    ...extraDates,
+  ].filter(Boolean).flatMap((date) => {
+    const dates = [date];
+    for (let offset = -14; offset <= 14; offset += 1) {
+      dates.push(addDaysISO(date, offset));
+    }
+    return dates;
+  }).filter((d, i, arr) => arr.indexOf(d) === i);
+}
+
+async function clearMutableTimelineEvents(userId, targetDay, timeZone, context = null) {
+  const candidates = await loadCandidateEvents(userId, targetDay, timeZone, context);
+  let deletedCount = 0;
+  for (const { event, storageDate } of candidates) {
+    const searchDates = buildSearchDatesForEvent(storageDate, event, [targetDay]);
+    const removed = await deleteEventEverywhere(userId, event.id, searchDates);
+    if (removed > 0) deletedCount += 1;
+  }
+  return deletedCount;
 }
 
 function scoreEventMatch(event, targetActivity, viewDate, timeZone, context) {
@@ -373,13 +459,28 @@ export async function applyScheduleMutation({
   timeZone = 'UTC',
   voiceContext = null,
 }) {
-  const mutation = parseMutationTranscript(transcript, referenceDate, voiceContext);
+  const refDate = referenceDate instanceof Date ? referenceDate : new Date(referenceDate);
+  const day = viewDate ?? toDateISO(refDate);
+  const mutation = parseMutationTranscript(transcript, referenceDate, voiceContext, day);
   if (!mutation) {
     return { applied: false, intent: 'create', reason: 'not_a_mutation' };
   }
 
-  const refDate = referenceDate instanceof Date ? referenceDate : new Date(referenceDate);
-  const day = viewDate ?? toDateISO(refDate);
+  if (mutation.action === 'clear_schedule') {
+    const targetDay = mutation.clearDate ?? day;
+    const deletedCount = await clearMutableTimelineEvents(userId, targetDay, timeZone, voiceContext);
+    return {
+      applied: true,
+      intent: 'mutate',
+      operation: {
+        action: 'clear_schedule',
+        deletedCount,
+        clearDate: targetDay,
+      },
+      voiceContext: null,
+    };
+  }
+
   const candidates = await loadCandidateEvents(userId, day, timeZone, voiceContext);
 
   if (candidates.length === 0) {
@@ -392,6 +493,32 @@ export async function applyScheduleMutation({
       applied: false,
       intent: 'mutate',
       reason: mutation.targetActivity || voiceContext?.lastEventId ? 'no_matching_event' : 'ambiguous_target',
+    };
+  }
+
+  if (mutation.action === 'cancel') {
+    const searchDates = buildSearchDatesForEvent(match.storageDate, match.event, [
+      day,
+      voiceContext?.lastStorageDate,
+    ]);
+    const removed = await deleteEventEverywhere(userId, match.event.id, searchDates);
+    if (removed === 0) {
+      return { applied: false, intent: 'mutate', reason: 'update_failed' };
+    }
+    const contextKept =
+      voiceContext?.lastEventId && voiceContext.lastEventId !== match.event.id
+        ? voiceContext
+        : null;
+    return {
+      applied: true,
+      intent: 'mutate',
+      operation: {
+        action: 'cancel',
+        eventId: match.event.id,
+        matchedActivity: activityLabel(match.event),
+        deletedCount: removed,
+      },
+      voiceContext: contextKept,
     };
   }
 

@@ -26,8 +26,9 @@ interface MutateResponse {
   applied: boolean;
   intent: 'mutate' | 'create';
   reason?: string;
-  voiceContext?: VoiceMutationContext;
+  voiceContext?: VoiceMutationContext | null;
   navigateToDate?: string;
+  operation?: { action?: string; deletedCount?: number };
 }
 
 /**
@@ -179,6 +180,11 @@ export class VoiceLogService {
       );
       if (result.applied && result.voiceContext) {
         this.mutationContext = result.voiceContext;
+      } else if (
+        result.applied
+        && (result.operation?.action === 'cancel' || result.operation?.action === 'clear_schedule')
+      ) {
+        this.mutationContext = result.voiceContext ?? null;
       }
       return result.applied ? result : null;
     } catch (err) {
@@ -189,7 +195,7 @@ export class VoiceLogService {
         if (err.status === 404) {
           throw new Error(
             err.error?.reason === 'no_matching_event'
-              ? 'Could not find a matching event to update. Try naming it, e.g. "my meeting".'
+              ? 'Could not find a matching event to remove. Try naming it, e.g. "my meeting".'
               : 'No events on this day to update.',
           );
         }

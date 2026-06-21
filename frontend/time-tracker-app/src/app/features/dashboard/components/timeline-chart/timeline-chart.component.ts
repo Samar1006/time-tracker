@@ -136,21 +136,24 @@ function layoutVerticalBlocks(
 
   const items = blocks
     .map((block) => {
-      const startIso = block.eventStart ?? block.start;
-      const endIso = block.eventEnd ?? block.end;
-      const startMin = minutesOnViewDate(startIso, viewDate, timeZone);
-      const endMin = minutesOnViewDate(endIso, viewDate, timeZone);
+      // Slice start/end match the portion of this event on the viewed calendar day.
+      const startMin = minutesOnViewDate(block.start, viewDate, timeZone);
+      let endMin = minutesOnViewDate(block.end, viewDate, timeZone);
+      if (endMin <= startMin && block.durationSec > 0) {
+        endMin = startMin + block.durationSec / 60;
+      }
       const clipStart = Math.max(startMin, rangeStartMin);
       const clipEnd = Math.min(endMin, rangeStartMin + rangeSpanMin);
       if (clipEnd <= clipStart) {
         return null;
       }
+      const spanMin = clipEnd - clipStart;
       return {
         block,
         startMin: clipStart,
         endMin: clipEnd,
         topPct: ((clipStart - rangeStartMin) / rangeSpanMin) * 100,
-        heightPct: ((clipEnd - clipStart) / rangeSpanMin) * 100,
+        heightPct: (spanMin / rangeSpanMin) * 100,
         column: 0,
         columnCount: 1
       };
@@ -185,7 +188,7 @@ function layoutVerticalBlocks(
   return items.map((item) => ({
     block: item.block,
     topPct: item.topPct,
-    heightPct: Math.max(item.heightPct, 0.6),
+    heightPct: item.heightPct,
     column: item.column,
     columnCount: item.columnCount
   }));
@@ -276,6 +279,10 @@ export class TimelineChartComponent {
 
   blockContinuesFromPrevDay(block: TimelineBlock): boolean {
     return block.spansFromPrevDay === true;
+  }
+
+  blockIsCompact(positioned: PositionedBlock): boolean {
+    return positioned.block.durationSec < 20 * 60;
   }
 
   categoryColor(category: ActivityCategory): string {

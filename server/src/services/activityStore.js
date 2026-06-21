@@ -109,17 +109,23 @@ function buildSearchDates(storageDateHint, updatedEvent, extraDates = []) {
 
 /**
  * Remove an event id from every searched day bucket (cleans up stale duplicates).
+ * @returns {Promise<number>} buckets updated
  */
-async function removeEventById(userId, eventId, searchDates) {
-  let removedFrom = null;
+export async function deleteEventEverywhere(userId, eventId, searchDates) {
+  let removed = 0;
   for (const date of searchDates) {
     const events = await loadEvents(userId, date);
     if (!events.some((e) => e.id === eventId)) continue;
     const next = events.filter((e) => e.id !== eventId);
     await saveEvents(userId, date, next);
-    removedFrom = date;
+    removed += 1;
   }
-  return removedFrom;
+  return removed;
+}
+
+async function removeEventById(userId, eventId, searchDates) {
+  const removed = await deleteEventEverywhere(userId, eventId, searchDates);
+  return removed > 0 ? true : null;
 }
 
 /**
@@ -198,5 +204,6 @@ export default {
   saveEvents,
   findEventOnDay,
   replaceEvent,
+  deleteEventEverywhere,
   loadMonthDayTotals,
 };
