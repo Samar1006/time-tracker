@@ -1,6 +1,18 @@
 import { ActivityCategory, TimelineHour, TimelineResponse } from '../../../core/models/timeline.model';
 import { formatDuration } from '../../../core/utils/duration.util';
 
+export function hasLiveTrackedData(timeline: TimelineResponse | null): boolean {
+  if (!timeline) return false;
+  return timeline.hours.some((hour) =>
+    hour.blocks.some((block) => block.source === 'tracked' || block.source === 'voice' || block.source === 'manual')
+  );
+}
+
+export function hasDemoData(timeline: TimelineResponse | null): boolean {
+  if (!timeline) return false;
+  return timeline.hours.some((hour) => hour.blocks.some((block) => block.source === 'demo'));
+}
+
 export interface DashboardStats {
   totalTracked: string;
   mostActiveCategory: string;
@@ -75,8 +87,40 @@ export function getVisibleHours(
   });
 }
 
+/** Pick chart hours so evening activity (e.g. 9 PM YouTube) is visible. */
+export function computeVisibleHourRange(
+  hours: TimelineHour[],
+  selectedDate: string
+): { startHour: number; endHour: number } {
+  const activeHours = hours.filter((hour) => hour.totalTrackedSec > 0).map((hour) => hour.hour);
+
+  if (activeHours.length > 0) {
+    const min = Math.min(...activeHours);
+    const max = Math.max(...activeHours);
+    return {
+      startHour: Math.max(0, min - 1),
+      endHour: Math.min(23, max + 1)
+    };
+  }
+
+  const today = toDateInputValue(new Date());
+  const nowHour = new Date().getHours();
+
+  if (selectedDate === today) {
+    return {
+      startHour: Math.min(8, nowHour),
+      endHour: Math.min(23, Math.max(22, nowHour + 1))
+    };
+  }
+
+  return { startHour: 8, endHour: 23 };
+}
+
 export function toDateInputValue(date: Date): string {
-  return date.toISOString().slice(0, 10);
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
 }
 
 export function shiftDate(dateString: string, days: number): string {

@@ -33,6 +33,40 @@ describe('activity routes (API contract)', () => {
     assert.equal(res.status, 401);
   });
 
+  it('GET /api/monitor/status returns event count for a day', async () => {
+    await request('/api/events', {
+      method: 'POST',
+      headers: bearer(token),
+      body: {
+        timestamp: `${DATE}T21:30:00.000Z`,
+        type: 'domain_visit',
+        app: 'Chrome',
+        domain: 'youtube.com',
+        durationSec: 120,
+        metadata: { localDate: DATE },
+      },
+    });
+
+    const status = await request(`/api/monitor/status?userId=${USER}&date=${DATE}`, {
+      headers: bearer(token),
+    });
+    assert.equal(status.status, 200);
+    assert.equal(status.body.eventCount, 1);
+    assert.equal(status.body.lastDomain, 'youtube.com');
+  });
+
+  it('GET /api/timeline returns empty timeline when no events', async () => {
+    const res = await request(`/api/timeline?userId=${USER}&date=${DATE}`, {
+      headers: bearer(token),
+    });
+    assert.equal(res.status, 200);
+    assert.equal(res.body.userId, USER);
+    assert.equal(res.body.totalTrackedSec, 0);
+    assert.ok(Array.isArray(res.body.hours));
+    assert.equal(res.body.hours.length, 24);
+    assert.equal(res.body.hours[9].blocks.length, 0);
+  });
+
   it('POST /api/events without token returns 401', async () => {
     const res = await request('/api/events', {
       method: 'POST',
@@ -63,7 +97,17 @@ describe('activity routes (API contract)', () => {
     });
     assert.equal(res.status, 200);
     assert.equal(res.body.userId, USER);
+    assert.equal(res.body.totalTrackedSec, 0);
     assert.ok(Array.isArray(res.body.hours));
+    assert.equal(res.body.hours.length, 24);
+    assert.equal(res.body.hours[9].blocks.length, 0);
+  });
+
+  it('GET /api/timeline?demo=true returns demo fallback when empty', async () => {
+    const res = await request(`/api/timeline?userId=${USER}&date=${DATE}&demo=true`, {
+      headers: bearer(token),
+    });
+    assert.equal(res.status, 200);
     assert.equal(res.body.hours[9].blocks[0].source, 'demo');
   });
 
@@ -168,6 +212,7 @@ describe('activity routes (API contract)', () => {
     const timeline = await request(`/api/timeline?userId=${USER}&date=${DATE}`, {
       headers: bearer(token),
     });
-    assert.equal(timeline.body.hours[9].blocks[0].source, 'demo');
+    assert.equal(timeline.body.totalTrackedSec, 0);
+    assert.equal(timeline.body.hours[9].blocks.length, 0);
   });
 });

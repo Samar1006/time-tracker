@@ -10,12 +10,20 @@ export class TimelineService {
   private readonly http = inject(HttpClient);
 
   getTimeline(userId: string, date: string): Observable<TimelineResponse> {
-    const params = new HttpParams().set('userId', userId).set('date', date);
+    const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const params = new HttpParams()
+      .set('userId', userId)
+      .set('date', date)
+      .set('timezone', timezone);
     return this.http.get<TimelineResponse>(`${environment.apiUrl}/api/timeline`, { params });
   }
 
   getMonthSummary(userId: string, month: string): Observable<MonthSummaryResponse> {
-    const params = new HttpParams().set('userId', userId).set('month', month);
+    const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const params = new HttpParams()
+      .set('userId', userId)
+      .set('month', month)
+      .set('timezone', timezone);
     return this.http.get<MonthSummaryResponse>(`${environment.apiUrl}/api/timeline/summary`, {
       params
     });

@@ -37,6 +37,16 @@ function padTimelineHours(hours) {
   );
 }
 
+function emptyTimeline(userId, date, timezone = 'UTC') {
+  return {
+    userId,
+    date,
+    timezone,
+    totalTrackedSec: 0,
+    hours: padTimelineHours([]),
+  };
+}
+
 function resolveDate(req) {
   return parseDateOnly(req.query.date || req.body?.date) ?? todayUtcDate();
 }
@@ -80,8 +90,36 @@ function collectEvents(body) {
   return null;
 }
 
+function eventStorageDate(event) {
+  const localDate = parseDateOnly(event.metadata?.localDate);
+  if (localDate) return localDate;
+  return parseDateOnly(event.timestamp);
+}
+
 router.get('/timeline/health', (_req, res) => {
   res.json({ ok: true, storage: getStorageMode() });
+});
+
+router.get('/monitor/status', requireAuth, async (req, res, next) => {
+  try {
+    if (rejectUserIdMismatch(res, req.user.id, req.query.userId, 'userId query param')) return;
+
+    const userId = req.user.id;
+    const date = parseDateOnly(req.query.date) ?? todayUtcDate();
+    const events = await loadEvents(userId, date);
+    const lastEvent = events.length > 0 ? events[events.length - 1] : null;
+
+    res.json({
+      userId,
+      date,
+      eventCount: events.length,
+      lastEventAt: lastEvent?.timestamp ?? null,
+      lastDomain: lastEvent?.domain ?? null,
+      storage: getStorageMode(),
+    });
+  } catch (err) {
+    next(err);
+  }
 });
 
 router.post('/events', requireAuth, async (req, res, next) => {
@@ -109,7 +147,7 @@ router.post('/events', requireAuth, async (req, res, next) => {
 
     const byDay = new Map();
     for (const event of normalized) {
-      const date = parseDateOnly(event.timestamp);
+      const date = eventStorageDate(event);
       if (!date) {
         return res.status(400).json({ error: 'Each event timestamp must include a calendar date.' });
       }
@@ -146,20 +184,25 @@ router.get('/timeline/summary', requireAuth, async (req, res, next) => {
       return res.status(400).json({ error: 'Provide month query param as YYYY-MM.' });
     }
 
+    const timezone = req.query.timezone || 'UTC';
     const [year, monthNum] = month.split('-').map(Number);
     const daysInMonth = new Date(Date.UTC(year, monthNum, 0)).getUTCDate();
-    const days = [];
 
-    for (let day = 1; day <= daysInMonth; day += 1) {
-      const date = `${month}-${String(day).padStart(2, '0')}`;
-      const events = await loadEvents(userId, date);
-      const totalTrackedSec = events.length === 0
-        ? 0
-        : aggregateTimeline(events, date, { userId }).totalTrackedSec;
-      days.push({ date, totalTrackedSec });
-    }
+    const dayResults = await Promise.all(
+      Array.from({ length: daysInMonth }, (_, index) => {
+        const day = index + 1;
+        const date = `${month}-${String(day).padStart(2, '0')}`;
+        return loadEvents(userId, date).then((events) => ({
+          date,
+          totalTrackedSec:
+            events.length === 0
+              ? 0
+              : aggregateTimeline(events, date, { userId, timezone }).totalTrackedSec,
+        }));
+      }),
+    );
 
-    res.json({ userId, month, days });
+    res.json({ userId, month, timezone, days: dayResults });
   } catch (err) {
     next(err);
   }
@@ -175,14 +218,17 @@ router.get('/timeline', requireAuth, async (req, res, next) => {
     const events = await loadEvents(userId, date);
 
     if (events.length === 0) {
-      const fallback = {
-        ...demoTimeline,
-        userId,
-        date,
-        timezone,
-      };
-      fallback.hours = padTimelineHours(fallback.hours);
-      return res.json(fallback);
+      if (req.query.demo === 'true') {
+        const fallback = {
+          ...demoTimeline,
+          userId,
+          date,
+          timezone,
+        };
+        fallback.hours = padTimelineHours(fallback.hours);
+        return res.json(fallback);
+      }
+      return res.json(emptyTimeline(userId, date, timezone));
     }
 
     res.json(aggregateTimeline(events, date, { userId, timezone }));

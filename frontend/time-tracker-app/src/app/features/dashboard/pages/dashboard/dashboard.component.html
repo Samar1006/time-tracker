@@ -1,4 +1,4 @@
-<div class="dashboard-shell">
+<div class="dashboard-shell" [attr.data-tracker-user-id]="userId()">
   <app-dashboard-header
     [displayDate]="displayDate()"
     (prevDay)="previousDay()"
@@ -14,6 +14,68 @@
       } @else if (error()) {
         <p class="dashboard-shell__status dashboard-shell__status--error">{{ error() }}</p>
       } @else {
+        <section
+          class="dashboard-monitor"
+          [class.dashboard-monitor--live]="hasLiveData()"
+          [class.dashboard-monitor--demo]="showingDemoData()"
+        >
+          <div class="dashboard-monitor__header">
+            <span class="dashboard-monitor__badge">
+              @if (hasLiveData()) {
+                Live browser tracking
+              } @else if (showingDemoData()) {
+                Sample data (not your browsing)
+              } @else {
+                Waiting for browser activity
+              }
+            </span>
+            <p class="dashboard-monitor__text">
+              @if (hasLiveData()) {
+                Showing websites tracked by the Chrome extension for {{ displayDate() }}.
+              } @else if (showingDemoData()) {
+                Restart the server and reload the extension, then browse in Chrome.
+              } @else {
+                Browse in Chrome with the extension enabled. Stay on a site 30+ seconds, then switch tabs.
+              }
+            </p>
+          </div>
+
+          <div class="dashboard-monitor__status-grid">
+            <div class="dashboard-monitor__status-item">
+              <span class="dashboard-monitor__status-label">Extension</span>
+              <span
+                class="dashboard-monitor__status-value"
+                [class.dashboard-monitor__status-value--ok]="extensionStatus().connected"
+              >
+                {{ extensionStatus().connected ? 'Connected' : 'Not detected — load extension in Chrome' }}
+              </span>
+            </div>
+            <div class="dashboard-monitor__status-item">
+              <span class="dashboard-monitor__status-label">Last sync</span>
+              <span class="dashboard-monitor__status-value">{{ lastSyncLabel() }}</span>
+            </div>
+            @if (monitorStatus()?.lastDomain) {
+              <div class="dashboard-monitor__status-item">
+                <span class="dashboard-monitor__status-label">Last site</span>
+                <span class="dashboard-monitor__status-value">{{ monitorStatus()?.lastDomain }}</span>
+              </div>
+            }
+          </div>
+          @if (userId()) {
+            <div class="dashboard-monitor__user">
+              <code class="dashboard-monitor__user-id">{{ userId() }}</code>
+              <button type="button" class="dashboard-monitor__copy" (click)="copyUserId()">
+                {{ copyStatus() ?? 'Copy user ID' }}
+              </button>
+            </div>
+            <ol class="dashboard-monitor__steps">
+              <li>Load unpacked extension from <code>browser-extension/</code> in Chrome</li>
+              <li>Open this dashboard — your user ID syncs to the extension automatically</li>
+              <li>Browse websites; the extension sends tab activity to the API every few seconds</li>
+            </ol>
+          }
+        </section>
+
         <section class="dashboard-stats">
           <app-stat-card label="Total tracked" [value]="stats().totalTracked" icon="clock" />
           <app-stat-card

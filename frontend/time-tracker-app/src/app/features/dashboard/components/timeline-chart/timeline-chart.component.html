@@ -13,7 +13,7 @@
     </button>
   </header>
 
-  <div class="timeline-chart">
+  <div class="timeline-chart" [style.--timeline-columns]="hours().length">
     @for (hour of hours(); track hour.hour) {
       <div class="timeline-chart__column">
         <div class="timeline-chart__bar">

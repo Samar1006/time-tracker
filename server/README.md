@@ -24,6 +24,28 @@ npm run dev     # http://localhost:4000
 npm start
 ```
 
+## Redis Cloud setup
+
+If you see `falling back to memory` or `"storage":"memory"`:
+
+```bash
+npm run redis:test
+```
+
+This prints **your public IP** to whitelist and tests the connection.
+
+### Fix in Redis Cloud console
+
+1. Open [cloud.redis.io](https://cloud.redis.io) → your database
+2. **Configuration** → **Security** → enable **CIDR allow list**
+3. Add your IP as `YOUR.IP.HERE/32` (from `npm run redis:test`)  
+   Hackathon shortcut: `0.0.0.0/0` (allows all — fine for local dev)
+4. Ensure **Public endpoint** is enabled
+5. **Connect** tab → copy the **Public** URL into `server/.env` as `REDIS_URL`  
+   Use `redis://` or `rediss://` exactly as shown — do not swap them
+6. Restart: `npm start`
+7. Verify: `curl http://localhost:4000/api/timeline/health` → `"storage":"redis"`
+
 ## Test
 
 Built-in Node test runner — **no Redis and no API keys required**. Ingestion

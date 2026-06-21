@@ -1,3 +1,5 @@
+import { toDateInputValue } from './dashboard-stats.util';
+
 export interface CalendarCell {
   date: string | null;
   day: number | null;
@@ -20,7 +22,7 @@ export function buildCalendarGrid(
   const firstDay = new Date(Date.UTC(year, monthNum - 1, 1));
   const daysInMonth = new Date(Date.UTC(year, monthNum, 0)).getUTCDate();
   const startOffset = firstDay.getUTCDay();
-  const today = new Date().toISOString().slice(0, 10);
+  const today = toDateInputValue(new Date());
   const cells: CalendarCell[] = [];
 
   for (let i = 0; i < startOffset; i += 1) {
@@ -66,6 +68,16 @@ export function shiftMonth(month: string, delta: number): string {
   const y = date.getUTCFullYear();
   const m = String(date.getUTCMonth() + 1).padStart(2, '0');
   return `${y}-${m}`;
+}
+
+export function daysInMonth(month: string): number {
+  const [year, monthNum] = month.split('-').map(Number);
+  return new Date(Date.UTC(year, monthNum, 0)).getUTCDate();
+}
+
+export function clampDateToMonth(month: string, dateString: string): string {
+  const dayNum = Math.min(parseInt(dateString.slice(8, 10), 10), daysInMonth(month));
+  return `${month}-${String(dayNum).padStart(2, '0')}`;
 }
 
 export function formatMonthLabel(month: string): string {
