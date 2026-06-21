@@ -28,6 +28,8 @@ export class DayDateNavComponent {
   readonly date = input.required<string>();
   readonly activityTotalsByDate = input<Map<string, number>>(new Map());
   readonly showTodayButton = input(false);
+  /** When true, the date portion of the title uses the primary accent color (timeline day view). */
+  readonly accentDateTitle = input(false);
 
   readonly prevDay = output<void>();
   readonly nextDay = output<void>();
@@ -38,6 +40,14 @@ export class DayDateNavComponent {
   readonly popupWeekdays = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 
   readonly displayTitle = computed(() => formatDisplayDate(this.date()));
+  readonly titleDateLabel = computed(() => {
+    const date = new Date(`${this.date()}T12:00:00`);
+    return new Intl.DateTimeFormat('en-US', {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric'
+    }).format(date);
+  });
   readonly popupMonthLabel = computed(() => formatMonthLabel(this.popupMonth()));
   readonly popupCells = computed(() =>
     buildCalendarGrid(this.popupMonth(), this.date(), this.activityTotalsByDate())

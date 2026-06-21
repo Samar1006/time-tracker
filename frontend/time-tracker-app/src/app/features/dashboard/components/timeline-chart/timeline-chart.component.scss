@@ -19,10 +19,73 @@
   max-width: 28rem;
 }
 
+.timeline-card__create-prompt {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+  margin: 0 0 1rem;
+  padding: 0.75rem 1rem;
+  background: color-mix(in srgb, var(--color-primary) 8%, var(--color-white));
+  border: 1px solid color-mix(in srgb, var(--color-primary) 35%, var(--color-border));
+  border-radius: var(--radius-md);
+}
+
+.timeline-card__create-label {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--color-text-muted);
+}
+
+.timeline-card__create-input {
+  flex: 1 1 12rem;
+  min-width: 0;
+  padding: 0.5rem 0.625rem;
+  font-size: 0.875rem;
+  color: var(--color-text);
+  background: var(--color-white);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+
+  &:focus {
+    outline: 2px solid color-mix(in srgb, var(--color-primary) 45%, transparent);
+    outline-offset: 1px;
+    border-color: var(--color-primary);
+  }
+}
+
+.timeline-card__create-time {
+  font-size: 0.8125rem;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+}
+
+.timeline-card__create-actions {
+  display: flex;
+  gap: 0.375rem;
+}
+
+.timeline-card__create-btn {
+  padding: 0.375rem 0.75rem;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--color-white);
+  background: var(--color-primary);
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+
+  &--ghost {
+    color: var(--color-text-muted);
+    background: transparent;
+    border: 1px solid var(--color-border);
+  }
+}
+
 .day-calendar {
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
-  background: var(--color-surface);
+  background: linear-gradient(180deg, var(--color-surface) 0%, var(--color-panel-bg) 100%);
   overflow: hidden;
 }
 
@@ -63,10 +126,21 @@
 
 .day-calendar__canvas {
   position: relative;
-  border-left: 1px solid #e5e7eb;
+  border-left: 1px solid var(--color-border);
+  background: linear-gradient(
+    180deg,
+    rgb(29 78 216 / 2%) 0%,
+    transparent 12%,
+    transparent 88%,
+    rgb(29 78 216 / 3%) 100%
+  );
   min-height: 100%;
   touch-action: none;
   cursor: crosshair;
+
+  &--labeling {
+    cursor: default;
+  }
 }
 
 .day-calendar__hour-line-wrap,
@@ -84,7 +158,7 @@
   left: 0;
   right: 0;
   height: 1px;
-  background: #e5e7eb;
+  background: var(--color-border);
 }
 
 .day-calendar__half-hour-line {
@@ -93,7 +167,7 @@
   left: 0;
   right: 0;
   height: 1px;
-  background: rgb(229 231 235 / 55%);
+  background: color-mix(in srgb, var(--color-border) 55%, transparent);
 }
 
 .day-calendar__empty {
@@ -182,31 +256,12 @@
   right: 0;
   width: auto;
   z-index: 5;
+  pointer-events: none;
   color: var(--color-text);
   background: color-mix(in srgb, var(--color-primary) 22%, transparent);
   border: 2px solid var(--color-primary);
   border-radius: 6px;
   box-shadow: 0 2px 8px color-mix(in srgb, var(--color-primary) 20%, transparent);
-  cursor: text;
-}
-
-.day-calendar__create-label-input {
-  width: 100%;
-  min-width: 0;
-  padding: 0;
-  margin: 0;
-  font: inherit;
-  font-size: 0.75rem;
-  font-weight: 600;
-  line-height: 1.2;
-  color: inherit;
-  background: transparent;
-  border: none;
-  outline: none;
-
-  &::placeholder {
-    color: var(--color-text-muted);
-  }
 }
 
 .day-calendar__resize {

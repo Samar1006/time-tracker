@@ -76,17 +76,12 @@ export function offsetYToMinutes(offsetY: number, canvasHeightPx: number): numbe
   return snapMinutes((offsetY / canvasHeightPx) * MINUTES_PER_DAY);
 }
 
-/** Drag-to-create: anchor is the start; only downward drags extend the end. */
-export function clampDownwardCreateInterval(
-  anchorStartMin: number,
+/** Drag-to-create: anchor + current pointer define the interval (either direction). */
+export function clampCreateDragInterval(
+  anchorMin: number,
   currentMin: number
 ): { startMin: number; endMin: number } {
-  const startMin = snapMinutes(anchorStartMin);
-  const endMin =
-    currentMin >= startMin
-      ? snapMinutes(currentMin)
-      : startMin + MIN_DURATION_MINUTES;
-  return clampIntervalToDay(startMin, endMin);
+  return clampIntervalToDay(Math.min(anchorMin, currentMin), Math.max(anchorMin, currentMin));
 }
 
 export function buildCreateEventDraft(

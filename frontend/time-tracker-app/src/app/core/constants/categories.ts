@@ -1,12 +1,12 @@
 import { ActivityCategory } from '../models/timeline.model';
 
 export const CATEGORY_COLORS: Record<ActivityCategory, string> = {
-  work: '#1d4ed8',
-  communication: '#38bdf8',
-  learning: '#22c55e',
-  entertainment: '#ec4899',
-  break: '#f97316',
-  uncategorized: '#9ca3af'
+  work: '#4c6ef5',
+  communication: '#14b8a6',
+  learning: '#10b981',
+  entertainment: '#e879f9',
+  break: '#f59e0b',
+  uncategorized: '#94a3b8'
 };
 
 export const CATEGORY_LABELS: Record<ActivityCategory, string> = {

@@ -15,7 +15,7 @@ import {
   RESIZE_HANDLE_PX,
   buildCreateEventDraft,
   buildEventTimePatch,
-  clampDownwardCreateInterval,
+  clampCreateDragInterval,
   clampIntervalToDay,
   deltaPxToMinutes,
   offsetYToMinutes
@@ -260,6 +260,7 @@ export class TimelineChartComponent {
   private readonly createLabelInput = viewChild<ElementRef<HTMLInputElement>>('createLabelInput');
   private skipCreateLabelBlur = false;
   private createBusyWasTrue = false;
+  private labelBlurReady = false;
   private pinchStartScale = MIN_ZOOM;
   private pointerAnchorY = 0;
   private savedScrollTop = 0;
@@ -333,12 +334,20 @@ export class TimelineChartComponent {
 
     effect(() => {
       if (!this.labelingCreate()) {
+        this.labelBlurReady = false;
         return;
       }
+      this.labelBlurReady = false;
       afterNextRender(() => {
         const input = this.createLabelInput()?.nativeElement;
-        input?.focus();
-        input?.select();
+        if (!input) {
+          return;
+        }
+        input.focus();
+        input.select();
+        window.setTimeout(() => {
+          this.labelBlurReady = true;
+        }, 200);
       });
     });
 
@@ -699,6 +708,7 @@ export class TimelineChartComponent {
 
   cancelActivityLabel(): void {
     this.skipCreateLabelBlur = true;
+    this.labelBlurReady = false;
     this.labelingCreate.set(null);
     this.createLabel.set('');
   }
@@ -708,10 +718,14 @@ export class TimelineChartComponent {
       this.skipCreateLabelBlur = false;
       return;
     }
+    if (!this.labelBlurReady) {
+      return;
+    }
     this.confirmActivityLabel();
   }
 
   onCreateLabelKeydown(event: KeyboardEvent): void {
+    event.stopPropagation();
     if (event.key === 'Enter') {
       this.confirmActivityLabel(event);
     } else if (event.key === 'Escape') {
@@ -720,13 +734,18 @@ export class TimelineChartComponent {
     }
   }
 
+  createLabelDraftTitle(): string {
+    const trimmed = this.createLabel().trim();
+    return trimmed || 'New activity';
+  }
+
   private updateCreatePreview(currentMin: number): void {
     const drag = this.activeCreateDrag();
     if (!drag) {
       return;
     }
 
-    const clamped = clampDownwardCreateInterval(drag.anchorStartMin, currentMin);
+    const clamped = clampCreateDragInterval(drag.anchorStartMin, currentMin);
     this.createPreview.set({
       previewTopPct: (clamped.startMin / MINUTES_PER_DAY) * 100,
       previewHeightPct: ((clamped.endMin - clamped.startMin) / MINUTES_PER_DAY) * 100,
