@@ -222,6 +222,47 @@ describe('activity routes (API contract)', () => {
     assert.equal(morning.body.hours[5].blocks.some((b) => b.activity === 'sleeping'), true);
   });
 
+  it('PATCH /api/events/:eventId updates event time and duration', async () => {
+    const ingest = await request('/api/events', {
+      method: 'POST',
+      headers: bearer(token),
+      body: {
+        timestamp: `${DATE}T09:00:00.000Z`,
+        type: 'manual',
+        title: 'Deep work',
+        durationSec: 3600,
+        metadata: { localDate: DATE },
+      },
+    });
+    assert.equal(ingest.status, 201);
+    const eventId = ingest.body.ids[0];
+
+    const before = await request(`/api/timeline?date=${DATE}&timezone=UTC`, {
+      headers: bearer(token),
+    });
+    assert.equal(before.body.hours[9].blocks[0].eventId, eventId);
+
+    const patch = await request(`/api/events/${eventId}?timezone=UTC`, {
+      method: 'PATCH',
+      headers: bearer(token),
+      body: {
+        timestamp: `${DATE}T10:00:00.000Z`,
+        durationSec: 1800,
+        metadata: { localDate: DATE },
+      },
+    });
+    assert.equal(patch.status, 200);
+    assert.equal(patch.body.event.id, eventId);
+    assert.equal(patch.body.event.durationSec, 1800);
+
+    const after = await request(`/api/timeline?date=${DATE}&timezone=UTC`, {
+      headers: bearer(token),
+    });
+    const block = after.body.hours[10].blocks.find((b) => b.eventId === eventId);
+    assert.ok(block);
+    assert.equal(block.durationSec, 1800);
+  });
+
   it('DELETE /api/events clears a day', async () => {
     await request('/api/events/seed', {
       method: 'POST',

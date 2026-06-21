@@ -52,30 +52,89 @@
           }
 
           @for (positioned of positionedBlocks(); track blockTrackKey(positioned)) {
-            <button
-              type="button"
-              class="day-calendar__event"
-              role="listitem"
-              [style.top.%]="positioned.topPct"
-              [style.height.%]="positioned.heightPct"
-              [style.left.%]="blockLeftPct(positioned)"
-              [style.width.%]="blockWidthPct(positioned)"
-              [style.background]="categoryColor(positioned.block.category)"
-              [class.day-calendar__event--compact]="blockIsCompact(positioned)"
-              [class.day-calendar__event--continues-next-day]="blockContinuesNextDay(positioned.block)"
-              [class.day-calendar__event--continues-prev-day]="blockContinuesFromPrevDay(positioned.block)"
-              (mouseenter)="showBlockTooltip(positioned, $event)"
-              (mouseleave)="hideTooltip()"
-              [attr.aria-label]="categoryLabels[positioned.block.category] + ', ' + formatTimeRange(positioned.block)"
+            @if (blockIsEditable(positioned.block)) {
+              <div
+                class="day-calendar__event day-calendar__event--editable"
+                role="listitem"
+                [style.top.%]="positioned.topPct"
+                [style.height.%]="positioned.heightPct"
+                [style.left.%]="blockLeftPct(positioned)"
+                [style.width.%]="blockWidthPct(positioned)"
+                [style.background]="categoryColor(positioned.block.category)"
+                [class.day-calendar__event--compact]="blockIsCompact(positioned)"
+                [class.day-calendar__event--continues-next-day]="blockContinuesNextDay(positioned.block)"
+                [class.day-calendar__event--continues-prev-day]="blockContinuesFromPrevDay(positioned.block)"
+                [class.day-calendar__event--drag-source]="isDraggingBlock(positioned)"
+                (pointerdown)="onBlockPointerDown($event, positioned)"
+                (mouseenter)="showBlockTooltip(positioned, $event)"
+                (mouseleave)="hideTooltip()"
+                [attr.aria-label]="categoryLabels[positioned.block.category] + ', ' + formatTimeRange(positioned.block)"
+              >
+                <span
+                  class="day-calendar__resize day-calendar__resize--top"
+                  data-resize="top"
+                  [style.height.px]="resizeHandlePx"
+                  (pointerdown)="onResizeHandleDown($event, positioned, 'resize-top')"
+                ></span>
+                <span class="day-calendar__event-title">{{ positioned.block.activity }}</span>
+                <span class="day-calendar__event-meta">
+                  {{ formatTimeRange(positioned.block) }}
+                </span>
+                @if (blockContinuesNextDay(positioned.block)) {
+                  <span class="day-calendar__event-continues" aria-hidden="true">continues</span>
+                }
+                <span
+                  class="day-calendar__resize day-calendar__resize--bottom"
+                  data-resize="bottom"
+                  [style.height.px]="resizeHandlePx"
+                  (pointerdown)="onResizeHandleDown($event, positioned, 'resize-bottom')"
+                ></span>
+              </div>
+            } @else {
+              <button
+                type="button"
+                class="day-calendar__event"
+                role="listitem"
+                [style.top.%]="positioned.topPct"
+                [style.height.%]="positioned.heightPct"
+                [style.left.%]="blockLeftPct(positioned)"
+                [style.width.%]="blockWidthPct(positioned)"
+                [style.background]="categoryColor(positioned.block.category)"
+                [class.day-calendar__event--compact]="blockIsCompact(positioned)"
+                [class.day-calendar__event--continues-next-day]="blockContinuesNextDay(positioned.block)"
+                [class.day-calendar__event--continues-prev-day]="blockContinuesFromPrevDay(positioned.block)"
+                (mouseenter)="showBlockTooltip(positioned, $event)"
+                (mouseleave)="hideTooltip()"
+                [attr.aria-label]="categoryLabels[positioned.block.category] + ', ' + formatTimeRange(positioned.block)"
+              >
+                <span class="day-calendar__event-title">{{ positioned.block.activity }}</span>
+                <span class="day-calendar__event-meta">
+                  {{ formatTimeRange(positioned.block) }}
+                </span>
+                @if (blockContinuesNextDay(positioned.block)) {
+                  <span class="day-calendar__event-continues" aria-hidden="true">continues</span>
+                }
+              </button>
+            }
+          }
+
+          @if (dragPreview(); as preview) {
+            <div
+              class="day-calendar__event day-calendar__event--preview"
+              role="presentation"
+              aria-hidden="true"
+              [style.top.%]="preview.previewTopPct"
+              [style.height.%]="preview.previewHeightPct"
+              [style.left.%]="blockLeftPct(preview.positioned)"
+              [style.width.%]="blockWidthPct(preview.positioned)"
+              [style.background]="categoryColor(preview.positioned.block.category)"
+              [class.day-calendar__event--compact]="blockIsCompact(preview.positioned)"
             >
-              <span class="day-calendar__event-title">{{ positioned.block.activity }}</span>
+              <span class="day-calendar__event-title">{{ preview.positioned.block.activity }}</span>
               <span class="day-calendar__event-meta">
-                {{ formatTimeRange(positioned.block) }}
+                {{ formatTimeRange(preview.positioned.block) }}
               </span>
-              @if (blockContinuesNextDay(positioned.block)) {
-                <span class="day-calendar__event-continues" aria-hidden="true">continues</span>
-              }
-            </button>
+            </div>
           }
         </div>
       </div>

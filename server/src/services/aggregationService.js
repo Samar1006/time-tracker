@@ -215,6 +215,7 @@ function mergeKey(slice) {
   const { event } = slice;
   return [
     slice.hour,
+    event.id ?? '',
     event.type,
     event.app ?? '',
     event.domain ?? '',
@@ -272,6 +273,7 @@ export function aggregateTimeline(events, date, { userId, timezone = 'UTC' } = {
       end: new Date(slice.endMs).toISOString(),
       eventStart: new Date(eventStartMs).toISOString(),
       eventEnd: new Date(eventEndMs).toISOString(),
+      eventId: slice.event.id,
       spansNextDay,
       spansFromPrevDay,
       activity: activityLabel(slice.event),

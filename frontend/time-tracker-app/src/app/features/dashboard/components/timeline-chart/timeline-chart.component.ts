@@ -8,6 +8,14 @@ import {
 import { ActivityCategory, TimelineBlock, TimelineHour } from '../../../../core/models/timeline.model';
 import { formatDuration, formatHourLabel } from '../../../../core/utils/duration.util';
 import { DayDateNavComponent } from '../../../../shared/components/day-date-nav/day-date-nav.component';
+import {
+  DragMode,
+  EventTimePatch,
+  RESIZE_HANDLE_PX,
+  buildEventTimePatch,
+  clampIntervalToDay,
+  deltaPxToMinutes
+} from './timeline-drag.util';
 
 interface TooltipState {
   category: string;
@@ -105,11 +113,13 @@ function mergeContiguousBlocks(blocks: TimelineBlock[]): TimelineBlock[] {
       blocksAreContiguous(last, block) &&
       last.activity === block.activity &&
       last.category === block.category &&
-      last.source === block.source
+      last.source === block.source &&
+      (last.eventId ?? '') === (block.eventId ?? '')
     ) {
       last.end = block.end;
       last.durationSec += block.durationSec;
       last.eventEnd = block.eventEnd ?? block.end;
+      last.eventId = block.eventId ?? last.eventId;
       last.spansNextDay = block.spansNextDay ?? last.spansNextDay;
     } else {
       merged.push({ ...block });
@@ -194,6 +204,22 @@ function layoutVerticalBlocks(
   }));
 }
 
+interface ActiveDrag {
+  positioned: PositionedBlock;
+  mode: DragMode;
+  anchorClientY: number;
+  origStartMin: number;
+  origEndMin: number;
+}
+
+interface DragPreview {
+  positioned: PositionedBlock;
+  previewTopPct: number;
+  previewHeightPct: number;
+  startMin: number;
+  endMin: number;
+}
+
 @Component({
   selector: 'app-timeline-chart',
   imports: [DayDateNavComponent],
@@ -208,6 +234,9 @@ export class TimelineChartComponent {
   readonly prevDay = output<void>();
   readonly nextDay = output<void>();
   readonly selectDate = output<string>();
+  readonly eventTimeChange = output<EventTimePatch>();
+
+  readonly patchError = input<string | null>(null);
 
   private readonly scrollContainer = viewChild<ElementRef<HTMLElement>>('scrollContainer');
   private pinchStartScale = MIN_ZOOM;
@@ -220,8 +249,15 @@ export class TimelineChartComponent {
 
   readonly zoomScale = signal(MIN_ZOOM);
   readonly tooltip = signal<TooltipState | null>(null);
+  readonly activeDrag = signal<ActiveDrag | null>(null);
+  readonly dragPreview = signal<DragPreview | null>(null);
   readonly categoryLegend = CATEGORY_LEGEND;
   readonly categoryLabels = CATEGORY_LABELS;
+  readonly resizeHandlePx = RESIZE_HANDLE_PX;
+
+  private readonly boundPointerMove = (event: PointerEvent) => this.onDragPointerMove(event);
+  private readonly boundPointerUp = (event: PointerEvent) => this.onDragPointerUp(event);
+  private dragCaptureEl: HTMLElement | null = null;
 
   readonly pxPerHour = computed(() => BASE_PX_PER_HOUR * this.zoomScale());
   readonly canvasHeightPx = computed(() => HOURS_PER_DAY * this.pxPerHour());
@@ -259,6 +295,19 @@ export class TimelineChartComponent {
   );
 
   constructor() {
+    effect(() => {
+      if (this.patchError()) {
+        this.cancelDrag();
+      }
+    });
+
+    effect(() => {
+      this.hours();
+      if (!this.activeDrag()) {
+        this.dragPreview.set(null);
+      }
+    });
+
     effect(() => {
       const date = this.date();
       this.hours();
@@ -313,7 +362,7 @@ export class TimelineChartComponent {
     });
     const startIso = block.eventStart ?? block.start;
     const endIso = block.eventEnd ?? block.end;
-    return `${fmt.format(new Date(startIso))} – ${fmt.format(new Date(endIso))}`;
+    return `${fmt.format(new Date(startIso))} - ${fmt.format(new Date(endIso))}`;
   }
 
   blockDurationLabel(block: TimelineBlock): string {
@@ -368,7 +417,155 @@ export class TimelineChartComponent {
 
   blockTrackKey(positioned: PositionedBlock): string {
     const { block } = positioned;
-    return `${block.start}|${block.end}|${block.activity}|${block.category}`;
+    return `${block.eventId ?? ''}|${block.start}|${block.end}|${block.activity}|${block.category}`;
+  }
+
+  blockIsEditable(block: TimelineBlock): boolean {
+    return Boolean(block.eventId) && block.source !== 'demo';
+  }
+
+  isDraggingBlock(positioned: PositionedBlock): boolean {
+    const drag = this.activeDrag();
+    return drag?.positioned.block.eventId === positioned.block.eventId;
+  }
+
+  onResizeHandleDown(event: PointerEvent, positioned: PositionedBlock, mode: DragMode): void {
+    event.preventDefault();
+    event.stopPropagation();
+    this.startDrag(event, positioned, mode);
+  }
+
+  onBlockPointerDown(event: PointerEvent, positioned: PositionedBlock): void {
+    if (!this.blockIsEditable(positioned.block)) {
+      return;
+    }
+    const target = event.target as HTMLElement;
+    if (target.dataset['resize']) {
+      return;
+    }
+    event.preventDefault();
+    this.startDrag(event, positioned, 'move');
+  }
+
+  private startDrag(event: PointerEvent, positioned: PositionedBlock, mode: DragMode): void {
+    if (!this.blockIsEditable(positioned.block)) {
+      return;
+    }
+
+    this.hideTooltip();
+    const { startMin, endMin } = this.blockIntervalMinutes(positioned.block);
+    this.activeDrag.set({
+      positioned,
+      mode,
+      anchorClientY: event.clientY,
+      origStartMin: startMin,
+      origEndMin: endMin
+    });
+    this.updateDragPreview(0);
+
+    document.addEventListener('pointermove', this.boundPointerMove);
+    document.addEventListener('pointerup', this.boundPointerUp);
+    document.addEventListener('pointercancel', this.boundPointerUp);
+    this.dragCaptureEl = event.currentTarget as HTMLElement;
+    this.dragCaptureEl.setPointerCapture(event.pointerId);
+  }
+
+  private onDragPointerMove(event: PointerEvent): void {
+    const drag = this.activeDrag();
+    if (!drag) {
+      return;
+    }
+    const deltaMin = deltaPxToMinutes(
+      event.clientY - drag.anchorClientY,
+      this.canvasHeightPx()
+    );
+    this.updateDragPreview(deltaMin);
+  }
+
+  private onDragPointerUp(event: PointerEvent): void {
+    const drag = this.activeDrag();
+    const preview = this.dragPreview();
+    this.teardownDragListeners();
+
+    if (!drag || !preview) {
+      this.cancelDrag();
+      return;
+    }
+
+    try {
+      const patch = buildEventTimePatch(
+        drag.positioned.block,
+        this.date(),
+        preview.startMin,
+        preview.endMin,
+        (iso, viewDate) => minutesOnViewDate(iso, viewDate, this.timezone())
+      );
+      this.eventTimeChange.emit(patch);
+    } catch {
+      this.cancelDrag();
+      return;
+    }
+
+    this.activeDrag.set(null);
+    this.dragCaptureEl?.releasePointerCapture(event.pointerId);
+    this.dragCaptureEl = null;
+  }
+
+  private updateDragPreview(deltaMin: number): void {
+    const drag = this.activeDrag();
+    if (!drag) {
+      return;
+    }
+
+    let startMin = drag.origStartMin;
+    let endMin = drag.origEndMin;
+
+    if (drag.mode === 'move') {
+      startMin += deltaMin;
+      endMin += deltaMin;
+    } else if (drag.mode === 'resize-top') {
+      startMin += deltaMin;
+    } else {
+      endMin += deltaMin;
+    }
+
+    const clamped = clampIntervalToDay(startMin, endMin);
+    const previewTopPct = (clamped.startMin / MINUTES_PER_DAY) * 100;
+    const previewHeightPct = ((clamped.endMin - clamped.startMin) / MINUTES_PER_DAY) * 100;
+
+    this.dragPreview.set({
+      positioned: drag.positioned,
+      previewTopPct,
+      previewHeightPct,
+      startMin: clamped.startMin,
+      endMin: clamped.endMin
+    });
+  }
+
+  private blockIntervalMinutes(block: TimelineBlock): { startMin: number; endMin: number } {
+    const viewDate = this.date();
+    const timeZone = this.timezone();
+    const eventStartIso = block.eventStart ?? block.start;
+    const eventEndIso = block.eventEnd ?? block.end;
+    const startMin = minutesOnViewDate(eventStartIso, viewDate, timeZone);
+    let endMin = minutesOnViewDate(eventEndIso, viewDate, timeZone);
+    if (endMin <= startMin) {
+      endMin = startMin + blockFullDurationSec(block) / 60;
+    }
+    return clampIntervalToDay(startMin, endMin);
+  }
+
+  private teardownDragListeners(): void {
+    document.removeEventListener('pointermove', this.boundPointerMove);
+    document.removeEventListener('pointerup', this.boundPointerUp);
+    document.removeEventListener('pointercancel', this.boundPointerUp);
+  }
+
+  private cancelDrag(): void {
+    this.teardownDragListeners();
+    this.activeDrag.set(null);
+    this.dragPreview.set(null);
+    this.dragCaptureEl = null;
   }
 
   onWheelZoom(event: WheelEvent): void {

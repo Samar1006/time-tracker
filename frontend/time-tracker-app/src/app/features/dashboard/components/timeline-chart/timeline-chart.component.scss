@@ -121,7 +121,6 @@
   text-align: left;
   border: none;
   border-radius: 6px;
-  border-left: 3px solid rgb(255 255 255 / 35%);
   box-shadow: 0 1px 2px rgb(0 0 0 / 8%);
   cursor: pointer;
   transition: filter 0.15s ease, box-shadow 0.15s ease;
@@ -130,6 +129,54 @@
     filter: brightness(1.05);
     box-shadow: 0 2px 6px rgb(0 0 0 / 12%);
     z-index: 2;
+  }
+}
+
+.day-calendar__event--editable {
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+
+  &:active {
+    cursor: grabbing;
+  }
+
+  &:hover {
+    z-index: 3;
+  }
+}
+
+.day-calendar__event--drag-source {
+  opacity: 0.35;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.day-calendar__event--preview {
+  opacity: 0.92;
+  z-index: 4;
+  pointer-events: none;
+  cursor: grabbing;
+  box-shadow: 0 4px 12px rgb(0 0 0 / 18%);
+  outline: 2px solid rgb(255 255 255 / 55%);
+  outline-offset: -1px;
+}
+
+.day-calendar__resize {
+  position: absolute;
+  left: 0;
+  right: 0;
+  z-index: 2;
+  touch-action: none;
+
+  &--top {
+    top: 0;
+    cursor: ns-resize;
+  }
+
+  &--bottom {
+    bottom: 0;
+    cursor: ns-resize;
   }
 }
 
