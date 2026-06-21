@@ -25,13 +25,21 @@
           </svg>
         </button>
       </div>
-      <p class="timeline-card__subtitle">Day view — time flows top to bottom</p>
+      <p class="timeline-card__subtitle">Scroll to navigate · pinch to zoom</p>
     </div>
   </header>
 
   <div class="day-calendar">
-    <div class="day-calendar__scroll">
-      <div class="day-calendar__layout" [style.height.px]="canvasHeightPx">
+    <div
+      class="day-calendar__scroll"
+      #scrollContainer
+      (wheel)="onWheelZoom($event)"
+      (pointermove)="onPointerMove($event)"
+      (gesturestart)="onGestureStart($event)"
+      (gesturechange)="onGestureChange($event)"
+      (gestureend)="onGestureEnd($event)"
+    >
+      <div class="day-calendar__layout" [style.height.px]="canvasHeightPx()">
         <div class="day-calendar__labels" aria-hidden="true">
           @for (guide of hourGuides(); track guide.hour) {
             <span class="day-calendar__hour-label" [style.top.%]="guide.topPct">

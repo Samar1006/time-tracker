@@ -1,4 +1,4 @@
-import { Component, computed, input, output, signal } from '@angular/core';
+import { Component, computed, ElementRef, input, output, signal, viewChild } from '@angular/core';
 
 import {
   CATEGORY_COLORS,
@@ -39,9 +39,13 @@ export interface HourGuide {
 
 const MINUTES_PER_HOUR = 60;
 const HOURS_PER_DAY = 24;
-const PX_PER_HOUR = 56;
+const BASE_PX_PER_HOUR = 56;
 const MINUTES_PER_DAY = HOURS_PER_DAY * MINUTES_PER_HOUR;
 const HALF_HOUR_STEP_PCT = (0.5 / HOURS_PER_DAY) * 100;
+const MIN_ZOOM = 1;
+const MAX_ZOOM = 6;
+/** Trackpad pinch fires wheel+ctrlKey; tuned for gesture deltas, not mouse wheel. */
+const PINCH_ZOOM_SENSITIVITY = 0.005;
 
 function localDayKey(iso: string, timeZone: string): string {
   return new Intl.DateTimeFormat('en-CA', {
@@ -201,13 +205,19 @@ export class TimelineChartComponent {
   readonly nextDay = output<void>();
   readonly selectDate = output<string>();
 
+  private readonly scrollContainer = viewChild<ElementRef<HTMLElement>>('scrollContainer');
+  private pinchStartScale = MIN_ZOOM;
+  private pointerAnchorY = 0;
+
+  readonly zoomScale = signal(MIN_ZOOM);
   readonly tooltip = signal<TooltipState | null>(null);
   readonly categoryLegend = CATEGORY_LEGEND;
   readonly categoryLabels = CATEGORY_LABELS;
 
-  readonly displayTitle = computed(() => formatDisplayDate(this.date()));
+  readonly pxPerHour = computed(() => BASE_PX_PER_HOUR * this.zoomScale());
+  readonly canvasHeightPx = computed(() => HOURS_PER_DAY * this.pxPerHour());
 
-  readonly canvasHeightPx = HOURS_PER_DAY * PX_PER_HOUR;
+  readonly displayTitle = computed(() => formatDisplayDate(this.date()));
 
   readonly hourGuides = computed((): HourGuide[] => {
     const guides: HourGuide[] = [];
@@ -313,4 +323,88 @@ export class TimelineChartComponent {
       this.selectDate.emit(value);
     }
   }
+
+  onWheelZoom(event: WheelEvent): void {
+    // macOS trackpad pinch sends wheel events with ctrlKey; plain two-finger scroll scrolls.
+    if (!event.ctrlKey) {
+      return;
+    }
+
+    event.preventDefault();
+    const delta = normalizeWheelDelta(event);
+    const factor = Math.exp(-delta * PINCH_ZOOM_SENSITIVITY);
+    this.applyZoomAtAnchor(this.zoomScale() * factor, this.getAnchorOffsetY(event));
+  }
+
+  onPointerMove(event: PointerEvent): void {
+    const el = this.scrollContainer()?.nativeElement;
+    if (!el) {
+      return;
+    }
+
+    const rect = el.getBoundingClientRect();
+    this.pointerAnchorY = event.clientY - rect.top;
+  }
+
+  onGestureStart(event: Event): void {
+    event.preventDefault();
+    this.pinchStartScale = this.zoomScale();
+  }
+
+  onGestureChange(event: Event): void {
+    event.preventDefault();
+    const gesture = event as Event & { scale: number };
+    this.applyZoomAtAnchor(
+      this.pinchStartScale * gesture.scale,
+      this.pointerAnchorY || this.getAnchorOffsetY()
+    );
+  }
+
+  onGestureEnd(event: Event): void {
+    event.preventDefault();
+  }
+
+  private getAnchorOffsetY(event?: WheelEvent): number {
+    const el = this.scrollContainer()?.nativeElement;
+    if (!el) {
+      return 0;
+    }
+
+    if (event) {
+      const rect = el.getBoundingClientRect();
+      return event.clientY - rect.top;
+    }
+
+    return el.clientHeight / 2;
+  }
+
+  private applyZoomAtAnchor(targetScale: number, anchorOffsetY: number): void {
+    const clamped = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, targetScale));
+    if (Math.abs(clamped - this.zoomScale()) < 0.001) {
+      return;
+    }
+
+    const el = this.scrollContainer()?.nativeElement;
+    const oldHeight = this.canvasHeightPx();
+    const anchorContentY = el ? el.scrollTop + anchorOffsetY : 0;
+    const anchorRatio = oldHeight > 0 ? anchorContentY / oldHeight : 0;
+
+    this.zoomScale.set(clamped);
+
+    if (!el) {
+      return;
+    }
+
+    el.scrollTop = anchorRatio * this.canvasHeightPx() - anchorOffsetY;
+  }
+}
+
+function normalizeWheelDelta(event: WheelEvent): number {
+  if (event.deltaMode === WheelEvent.DOM_DELTA_LINE) {
+    return event.deltaY * 16;
+  }
+  if (event.deltaMode === WheelEvent.DOM_DELTA_PAGE) {
+    return event.deltaY * 120;
+  }
+  return event.deltaY;
 }
