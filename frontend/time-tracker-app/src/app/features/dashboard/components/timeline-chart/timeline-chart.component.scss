@@ -94,6 +94,7 @@
   overflow-x: hidden;
   overscroll-behavior: contain;
   -webkit-overflow-scrolling: touch;
+  touch-action: pan-y;
 }
 
 .day-calendar__layout {
@@ -101,6 +102,7 @@
   grid-template-columns: 3.5rem minmax(0, 1fr);
   gap: 0.5rem;
   padding: 0.5rem 0.75rem 0.75rem 0.5rem;
+  will-change: height;
 }
 
 .day-calendar__labels {
