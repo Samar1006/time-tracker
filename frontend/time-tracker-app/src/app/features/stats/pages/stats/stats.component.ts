@@ -7,6 +7,7 @@ import { TimelineService } from '../../../../core/services/timeline.service';
 import { TimelineResponse } from '../../../../core/models/timeline.model';
 import { formatDuration } from '../../../../core/utils/duration.util';
 import { AppShellComponent } from '../../../../shared/layouts/app-shell/app-shell.component';
+import { DayDateNavComponent } from '../../../../shared/components/day-date-nav/day-date-nav.component';
 import { StatCardComponent } from '../../../dashboard/components/stat-card/stat-card.component';
 import { ActivityDonutChartComponent } from '../../components/activity-donut-chart/activity-donut-chart.component';
 import {
@@ -34,7 +35,7 @@ interface StatsData {
 
 @Component({
   selector: 'app-stats',
-  imports: [AppShellComponent, StatCardComponent, ActivityDonutChartComponent],
+  imports: [AppShellComponent, StatCardComponent, ActivityDonutChartComponent, DayDateNavComponent],
   templateUrl: './stats.component.html',
   styleUrl: './stats.component.scss'
 })
@@ -50,9 +51,19 @@ export class StatsComponent {
   readonly userId = computed(() => this.auth.user()?.userId ?? null);
   readonly formatDuration = formatDuration;
   readonly selectedDayLabel = computed(() => formatDisplayDate(this.selectedDay()));
-  readonly isSelectedToday = computed(
-    () => this.selectedDay() === toDateInputValue(new Date())
-  );
+
+  readonly activityTotalsByDate = computed(() => {
+    const data = this.statsData();
+    if (!data) {
+      return new Map<string, number>();
+    }
+
+    const totals = new Map<string, number>();
+    for (const [date, timeline] of data.timelinesByDate) {
+      totals.set(date, timeline.totalTrackedSec);
+    }
+    return totals;
+  });
 
   private readonly statsData = toSignal(
     combineLatest([toObservable(this.auth.user), toObservable(this.selectedDay)]).pipe(
@@ -219,14 +230,7 @@ export class StatsComponent {
     this.selectedDay.set(shiftDate(this.selectedDay(), 1));
   }
 
-  onDateInput(event: Event): void {
-    const value = (event.target as HTMLInputElement).value;
-    if (value) {
-      this.selectedDay.set(value);
-    }
-  }
-
-  goToToday(): void {
-    this.selectedDay.set(toDateInputValue(new Date()));
+  selectDay(date: string): void {
+    this.selectedDay.set(date);
   }
 }

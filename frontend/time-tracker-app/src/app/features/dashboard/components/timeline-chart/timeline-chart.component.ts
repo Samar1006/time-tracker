@@ -1,4 +1,4 @@
-import { Component, computed, effect, ElementRef, HostListener, afterEveryRender, input, output, signal, untracked, viewChild } from '@angular/core';
+import { Component, computed, effect, ElementRef, afterEveryRender, input, output, signal, untracked, viewChild } from '@angular/core';
 
 import {
   CATEGORY_COLORS,
@@ -7,13 +7,7 @@ import {
 } from '../../../../core/constants/categories';
 import { ActivityCategory, TimelineBlock, TimelineHour } from '../../../../core/models/timeline.model';
 import { formatDuration, formatHourLabel } from '../../../../core/utils/duration.util';
-import {
-  buildCalendarGrid,
-  formatMonthLabel,
-  monthKeyFromDate,
-  shiftMonth
-} from '../../utils/calendar.util';
-import { formatDisplayDate, toDateInputValue } from '../../utils/dashboard-stats.util';
+import { DayDateNavComponent } from '../../../../shared/components/day-date-nav/day-date-nav.component';
 
 interface TooltipState {
   category: string;
@@ -202,6 +196,7 @@ function layoutVerticalBlocks(
 
 @Component({
   selector: 'app-timeline-chart',
+  imports: [DayDateNavComponent],
   templateUrl: './timeline-chart.component.html',
   styleUrl: './timeline-chart.component.scss'
 })
@@ -225,17 +220,8 @@ export class TimelineChartComponent {
 
   readonly zoomScale = signal(MIN_ZOOM);
   readonly tooltip = signal<TooltipState | null>(null);
-  readonly calendarOpen = signal(false);
-  readonly popupMonth = signal(monthKeyFromDate(toDateInputValue(new Date())));
   readonly categoryLegend = CATEGORY_LEGEND;
   readonly categoryLabels = CATEGORY_LABELS;
-  readonly popupWeekdays = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
-
-  readonly displayTitle = computed(() => formatDisplayDate(this.date()));
-  readonly popupMonthLabel = computed(() => formatMonthLabel(this.popupMonth()));
-  readonly popupCells = computed(() =>
-    buildCalendarGrid(this.popupMonth(), this.date(), new Map())
-  );
 
   readonly pxPerHour = computed(() => BASE_PX_PER_HOUR * this.zoomScale());
   readonly canvasHeightPx = computed(() => HOURS_PER_DAY * this.pxPerHour());
@@ -383,37 +369,6 @@ export class TimelineChartComponent {
   blockTrackKey(positioned: PositionedBlock): string {
     const { block } = positioned;
     return `${block.start}|${block.end}|${block.activity}|${block.category}`;
-  }
-
-  onDatePick(date: string): void {
-    this.selectDate.emit(date);
-    this.calendarOpen.set(false);
-  }
-
-  toggleCalendar(event: MouseEvent): void {
-    event.stopPropagation();
-    const opening = !this.calendarOpen();
-    if (opening) {
-      this.popupMonth.set(monthKeyFromDate(this.date()));
-    }
-    this.calendarOpen.set(opening);
-  }
-
-  previousPopupMonth(event: MouseEvent): void {
-    event.stopPropagation();
-    this.popupMonth.update((month) => shiftMonth(month, -1));
-  }
-
-  nextPopupMonth(event: MouseEvent): void {
-    event.stopPropagation();
-    this.popupMonth.update((month) => shiftMonth(month, 1));
-  }
-
-  @HostListener('document:click')
-  closeCalendar(): void {
-    if (this.calendarOpen()) {
-      this.calendarOpen.set(false);
-    }
   }
 
   onWheelZoom(event: WheelEvent): void {

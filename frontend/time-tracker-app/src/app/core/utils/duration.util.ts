@@ -3,6 +3,10 @@ export function formatDuration(seconds: number): string {
     return '0m';
   }
 
+  if (seconds < 60) {
+    return '>1m';
+  }
+
   const hours = Math.floor(seconds / 3600);
   const minutes = Math.round((seconds % 3600) / 60);
 
