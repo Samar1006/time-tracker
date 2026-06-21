@@ -1,7 +1,8 @@
 import { Component, inject } from '@angular/core';
 import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
-import { RouterLink } from '@angular/router';
+import { Router, RouterLink } from '@angular/router';
 
+import { AuthService } from '../../../../core/services/auth.service';
 import { AuthFormHeaderComponent } from '../../../../shared/components/auth-form-header/auth-form-header.component';
 import { GoogleSignInButtonComponent } from '../../../../shared/components/google-sign-in-button/google-sign-in-button.component';
 import { AuthLayoutComponent } from '../../../../shared/layouts/auth-layout/auth-layout.component';
@@ -20,6 +21,8 @@ import { AuthLayoutComponent } from '../../../../shared/layouts/auth-layout/auth
 })
 export class LoginComponent {
   private readonly fb = inject(FormBuilder);
+  private readonly auth = inject(AuthService);
+  private readonly router = inject(Router);
 
   readonly loginForm = this.fb.nonNullable.group({
     email: ['', [Validators.required, Validators.email]],
@@ -32,12 +35,13 @@ export class LoginComponent {
       return;
     }
 
-    // TODO: connect to auth service
-    console.log('Login submitted', this.loginForm.getRawValue());
+    const { email } = this.loginForm.getRawValue();
+    this.auth.login(email);
+    void this.router.navigate(['/dashboard']);
   }
 
   onGoogleSignIn(): void {
-    // TODO: connect to Google OAuth
-    console.log('Google sign-in clicked');
+    this.auth.login('demo@timetracker.app');
+    void this.router.navigate(['/dashboard']);
   }
 }
