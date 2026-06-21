@@ -417,4 +417,30 @@ describe('scheduleMutationService', () => {
     const events = await loadEvents(USER, VIEW);
     assert.equal(events[0].timestamp, `${VIEW}T18:00:00.000Z`);
   });
+
+  it('does not mutate browser-tracked domain_visit events', async () => {
+    resetMemoryStore();
+    await appendEvents(USER, VIEW, [{
+      id: 'evt_github',
+      userId: USER,
+      timestamp: `${VIEW}T14:00:00.000Z`,
+      type: 'domain_visit',
+      app: 'Chrome',
+      domain: 'github.com',
+      durationSec: 1800,
+      metadata: { sourceClient: 'chrome-extension', localDate: VIEW },
+    }]);
+
+    const result = await applyScheduleMutation({
+      userId: USER,
+      transcript: 'Push github.com back by an hour',
+      referenceDate: REF,
+      viewDate: VIEW,
+      timeZone: 'UTC',
+    });
+
+    assert.equal(result.applied, false);
+    const events = await loadEvents(USER, VIEW);
+    assert.equal(events[0].timestamp, `${VIEW}T14:00:00.000Z`);
+  });
 });

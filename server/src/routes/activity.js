@@ -21,6 +21,7 @@ import {
   addDaysISO,
   localDateString,
 } from '../services/aggregationService.js';
+import { isUserEditableEvent } from '../services/eventEditability.js';
 import { getStorageMode } from '../services/redisClient.js';
 import { sampleActivityEvents } from '../data/sampleActivityEvents.js';
 import { requireAuth } from '../middleware/authMiddleware.js';
@@ -294,6 +295,12 @@ router.patch('/events/:eventId', requireAuth, async (req, res, next) => {
     const located = await locateStoredEvent(userId, eventId, dateHint);
     if (!located) {
       return res.status(404).json({ error: 'Event not found.' });
+    }
+    if (!isUserEditableEvent(located.event)) {
+      return res.status(403).json({
+        error: 'Tracked browser activity cannot be edited.',
+        code: 'EVENT_NOT_EDITABLE',
+      });
     }
 
     const timezone = req.query.timezone || 'UTC';
