@@ -209,6 +209,21 @@ export async function listRangeMany(keys) {
   );
 }
 
+export async function listSet(key, values) {
+  await runRedisOp(
+    'listSet',
+    async (client) => {
+      const multi = client.multi();
+      multi.del(key);
+      if (values.length > 0) multi.rPush(key, values);
+      await multi.exec();
+    },
+    () => {
+      memoryLists.set(key, [...values]);
+    },
+  );
+}
+
 /** Test helper — clears in-memory fallback between tests. */
 export function resetMemoryStore() {
   memoryLists.clear();
@@ -229,5 +244,6 @@ export default {
   listRangeMany,
   listLength,
   deleteKey,
+  listSet,
   resetMemoryStore,
 };

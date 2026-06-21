@@ -139,7 +139,7 @@ export class DashboardComponent {
       }
 
       this.lastHeard.set(result.transcript);
-      if (result.added > 0) {
+      if (result.added > 0 || result.updated > 0) {
         this.reloadTick.update((n) => n + 1);
       } else if (result.parsed > 0) {
         this.voiceError.set(
