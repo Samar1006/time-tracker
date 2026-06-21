@@ -120,12 +120,14 @@ function isDurationToken(seg, index, length) {
   return false;
 }
 
-// "from 2 to 3 am" — share am/pm across both ends of the range.
+// "from 2 to 3 am" / "from 7 pm until 9" — share am/pm across both ends when only one side has it.
 function parseFromToRange(seg, contextPm) {
   const normalized = normalizeSpokenTimes(seg);
-  const m = normalized.match(
-    new RegExp(`\\bfrom\\s+(${FROM_TO_TIME})\\s+to\\s+(${FROM_TO_TIME})\\b`, 'i'),
+  const rangeRe = new RegExp(
+    `\\bfrom\\s+(${FROM_TO_TIME})\\s+(?:to|until|till)\\s+(${FROM_TO_TIME})\\b`,
+    'i',
   );
+  const m = normalized.match(rangeRe);
   if (!m) return null;
 
   const endToken = m[2];
@@ -142,6 +144,7 @@ function parseFromToRange(seg, contextPm) {
     start,
     end,
     durationMin: end > start ? end - start : null,
+    spansMidnight: end < start,
   };
 }
 
@@ -297,6 +300,7 @@ const LABEL_STOP_WORDS = new Set([
 const PRESENT_VERB_FORMS = {
   run: 'running', ran: 'running', walk: 'walking', walked: 'walking',
   work: 'working', worked: 'working', study: 'studying', studied: 'studying',
+  sleep: 'sleeping', slept: 'sleeping',
   debug: 'debugging', debugged: 'debugging', code: 'coding', coded: 'coding',
   answer: 'answering', answered: 'answering', reply: 'replying', replied: 'replying',
   browse: 'browsing', browsed: 'browsing', watch: 'watching', watched: 'watching',
@@ -393,6 +397,56 @@ function parseSegmentTimes(seg, contextPm) {
   };
 }
 
+// Resolve same-day PM wrap vs cross-midnight span (e.g. 8 pm → 6 am).
+export function finalizeBlockSpan(dateISO, startMin, endMin, raw = '') {
+  if (startMin == null || endMin == null) {
+    return {
+      startMin,
+      endMin,
+      endDate: dateISO,
+      durationMin: null,
+      spansMidnight: false,
+    };
+  }
+
+  if (endMin > startMin) {
+    return {
+      startMin,
+      endMin,
+      endDate: dateISO,
+      durationMin: endMin - startMin,
+      spansMidnight: false,
+    };
+  }
+
+  const pmThenAm =
+    /\b\d{1,2}(?::\d{2})?\s*pm\b[\s\S]*\b\d{1,2}(?::\d{2})?\s*am\b/i.test(raw) ||
+    (/\bpm\b/i.test(raw) && /\bam\b/i.test(raw) && raw.search(/\bpm\b/i) < raw.search(/\bam\b/i));
+
+  const startIsPm = /\bpm\b/i.test(raw) || (startMin != null && startMin >= 12 * 60);
+  const endIsAm = /\bam\b/i.test(raw);
+  const overnight = pmThenAm || (startIsPm && endIsAm && endMin < startMin);
+
+  if (overnight) {
+    return {
+      startMin,
+      endMin,
+      endDate: toDateISO(addDays(dateISO, 1)),
+      durationMin: (24 * 60 - startMin) + endMin,
+      spansMidnight: true,
+    };
+  }
+
+  const wrappedEnd = endMin + 12 * 60;
+  return {
+    startMin,
+    endMin: wrappedEnd,
+    endDate: dateISO,
+    durationMin: wrappedEnd - startMin,
+    spansMidnight: false,
+  };
+}
+
 // Fill gaps using prior block end, lunch context, and trailing durations.
 function inferMissingTimes(blocks) {
   const prevEndByDate = new Map();
@@ -421,23 +475,32 @@ function inferMissingTimes(blocks) {
       if (duration != null) endMin = startMin + duration;
     }
 
+    const span = finalizeBlockSpan(dateKey, startMin, endMin, block.raw);
+    startMin = span.startMin;
+    endMin = span.endMin;
+    duration = span.durationMin ?? duration;
+
     block.start = fmt(startMin);
     block.end = fmt(endMin);
-    block.durationMin =
-      startMin != null && endMin != null ? endMin - startMin : duration;
-
-    if (startMin != null && endMin != null && endMin <= startMin) {
-      endMin += 12 * 60;
-      block.end = fmt(endMin);
-      block.durationMin = endMin - startMin;
+    block.durationMin = duration;
+    if (span.spansMidnight) {
+      block.endDate = span.endDate;
+    } else {
+      delete block.endDate;
     }
 
-    if (endMin != null) prevEnd = endMin;
-    else if (startMin != null && block.durationMin != null) {
-      prevEnd = startMin + block.durationMin;
-    } else if (startMin != null) prevEnd = startMin;
+    if (endMin != null && !span.spansMidnight) {
+      prevEnd = endMin;
+    } else if (startMin != null && duration != null && !span.spansMidnight) {
+      prevEnd = startMin + duration;
+    } else if (startMin != null && !span.spansMidnight) {
+      prevEnd = startMin;
+    }
 
     prevEndByDate.set(dateKey, prevEnd);
+    if (span.spansMidnight && endMin != null) {
+      prevEndByDate.set(span.endDate, endMin);
+    }
   }
 
   return blocks;
@@ -496,7 +559,7 @@ Categories (pick exactly one per block — output MUST use these exact values):
 - communication: email, Slack, calls, standups, syncs, 1:1s, team meetings
 - learning: reading docs, courses, tutorials, research, studying
 - entertainment: YouTube, games, social media, music, casual browsing
-- break: lunch, coffee, walk, gym, rest, nap, running, jogging, exercise, workout
+- break: lunch, coffee, walk, gym, rest, nap, sleep, running, jogging, exercise, workout
 - uncategorized: only when nothing else fits
 
 Examples:
@@ -547,7 +610,11 @@ const BLOCKS_SCHEMA = {
         properties: {
           start: { type: 'string', description: '12-hour time like "9:00 AM", or "" if unknown' },
           end: { type: 'string', description: '12-hour time like "10:30 AM", or "" if unknown' },
-          date: { type: 'string', description: 'Calendar date YYYY-MM-DD for this block' },
+          date: { type: 'string', description: 'Calendar date YYYY-MM-DD when the block starts' },
+          endDate: {
+            type: 'string',
+            description: 'Optional YYYY-MM-DD when end is on the next day (overnight spans only)',
+          },
           activity: { type: 'string', description: 'Short readable activity label' },
           category: {
             type: 'string',
@@ -585,6 +652,7 @@ export async function refineWithLLM(transcript, fallback, { categoryContext = []
         'Use 12-hour times with AM/PM (e.g. "9:00 AM", "2:00 PM"); use an empty string for any time you cannot infer. ' +
         'When someone says "at 6 am for 3 hours", the block runs 6:00 AM to 9:00 AM. ' +
         'When they say "from 2 to 3 am", both times are AM. ' +
+        'When they say "from 8 pm to 6 am", set endDate to the next calendar day (end stays 6:00 AM). ' +
         'Treat spoken number words (one, two, six, etc.) as numeric times and durations. ' +
         'Each block needs a calendar date (YYYY-MM-DD). Infer today/tomorrow/weekday mentions from the transcript. ' +
         'Infer missing start times from the previous activity end when reasonable. ' +
@@ -600,25 +668,22 @@ export async function refineWithLLM(transcript, fallback, { categoryContext = []
     if (!Array.isArray(parsed.blocks) || parsed.blocks.length === 0) return fallback;
 
     const blocks = parsed.blocks.map((b) => {
-      const startMin = parseFmt(b.start);
-      const endMin = parseFmt(b.end);
-      const durationMin =
-        startMin != null && endMin != null ? endMin - startMin : null;
       const block = {
         date: b.date || toDateISO(new Date()),
         dayLabel: null,
-        start: fmt(startMin),
-        end: fmt(endMin),
-        durationMin,
+        start: b.start ? fmt(parseFmt(b.start)) : null,
+        end: b.end ? fmt(parseFmt(b.end)) : null,
+        durationMin: null,
         activity: toPresentActivityLabel(b.activity || '(unspecified)'),
         category: b.category || 'uncategorized',
         confidence: 0,
         raw: transcript,
       };
+      if (b.endDate && b.endDate !== block.date) block.endDate = b.endDate;
       block.confidence = Number(llmBlockConfidence(block).toFixed(2));
       return block;
     });
-    return { blocks };
+    return { blocks: inferMissingTimes(blocks) };
   } catch {
     return fallback;
   }

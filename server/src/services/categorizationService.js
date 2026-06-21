@@ -37,7 +37,7 @@ export const CATEGORIES = {
   },
   break: {
     keywords: ['break', 'lunch', 'coffee', 'rest', 'walk', 'snack', 'nap', 'relax',
-      'workout', 'work out', 'running', 'jogging', 'exercise'],
+      'sleep', 'sleeping', 'workout', 'work out', 'running', 'jogging', 'exercise'],
     domains: [],
   },
 };
@@ -50,6 +50,7 @@ const PHRASE_RULES = [
   [/\blunch\s+break\b/, 'break'],
   [/\b(?:study|studying|homework|revision)\b/, 'learning'],
   [/\b(?:run|running|jog|jogging)\b/, 'break'],
+  [/\b(?:sleep|sleeping|nap|napping)\b/, 'break'],
   [/\b(?:workout|gym)\b/, 'break'],
   [/\b(?:standup|stand-up|stand up)\b/, 'communication'],
   [/\b(?:answered\s+)?emails?\b/, 'communication'],
