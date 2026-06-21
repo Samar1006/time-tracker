@@ -85,6 +85,23 @@ describe('activity routes (API contract)', () => {
     assert.equal(timeline.body.hours[9].blocks[0].source, 'tracked');
   });
 
+  it('GET /api/timeline/summary returns per-day totals for seeded month', async () => {
+    await request('/api/events/seed', {
+      method: 'POST',
+      headers: bearer(token),
+      body: { userId: USER, date: DATE },
+    });
+
+    const summary = await request(`/api/timeline/summary?userId=${USER}&month=2026-06`, {
+      headers: bearer(token),
+    });
+    assert.equal(summary.status, 200);
+    assert.equal(summary.body.month, '2026-06');
+    assert.equal(summary.body.days.length, 30);
+    const day20 = summary.body.days.find((d) => d.date === DATE);
+    assert.ok(day20.totalTrackedSec > 0);
+  });
+
   it('POST /api/events validates contract fields', async () => {
     const bad = await request('/api/events', {
       method: 'POST',

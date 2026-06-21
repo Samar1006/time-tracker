@@ -136,6 +136,35 @@ router.post('/events', requireAuth, async (req, res, next) => {
   }
 });
 
+router.get('/timeline/summary', requireAuth, async (req, res, next) => {
+  try {
+    if (rejectUserIdMismatch(res, req.user.id, req.query.userId, 'userId query param')) return;
+
+    const userId = req.user.id;
+    const month = req.query.month;
+    if (!month || !/^\d{4}-\d{2}$/.test(String(month))) {
+      return res.status(400).json({ error: 'Provide month query param as YYYY-MM.' });
+    }
+
+    const [year, monthNum] = month.split('-').map(Number);
+    const daysInMonth = new Date(Date.UTC(year, monthNum, 0)).getUTCDate();
+    const days = [];
+
+    for (let day = 1; day <= daysInMonth; day += 1) {
+      const date = `${month}-${String(day).padStart(2, '0')}`;
+      const events = await loadEvents(userId, date);
+      const totalTrackedSec = events.length === 0
+        ? 0
+        : aggregateTimeline(events, date, { userId }).totalTrackedSec;
+      days.push({ date, totalTrackedSec });
+    }
+
+    res.json({ userId, month, days });
+  } catch (err) {
+    next(err);
+  }
+});
+
 router.get('/timeline', requireAuth, async (req, res, next) => {
   try {
     if (rejectUserIdMismatch(res, req.user.id, req.query.userId, 'userId query param')) return;

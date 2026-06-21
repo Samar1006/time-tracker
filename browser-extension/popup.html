@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Time Tracker Monitor</title>
+    <style>
+      body {
+        font-family: system-ui, sans-serif;
+        width: 280px;
+        margin: 0;
+        padding: 1rem;
+        color: #1e1b4b;
+      }
+      h1 {
+        font-size: 1rem;
+        margin: 0 0 0.75rem;
+      }
+      .status {
+        font-size: 0.875rem;
+        color: #6b7280;
+      }
+      .status--on {
+        color: #059669;
+      }
+      a {
+        display: inline-block;
+        margin-top: 0.75rem;
+        color: #6366f1;
+        font-size: 0.875rem;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Background Monitor</h1>
+    <p id="status" class="status">Loading…</p>
+    <p id="domain" class="status"></p>
+    <a href="#" id="options">Extension settings</a>
+    <script src="popup.js"></script>
+  </body>
+</html>

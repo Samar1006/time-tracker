@@ -30,3 +30,14 @@ export interface TimelineResponse {
   totalTrackedSec: number;
   hours: TimelineHour[];
 }
+
+export interface DaySummary {
+  date: string;
+  totalTrackedSec: number;
+}
+
+export interface MonthSummaryResponse {
+  userId: string;
+  month: string;
+  days: DaySummary[];
+}
