@@ -33,11 +33,36 @@ uses the in-memory fallback; parsing and categorization run offline.
 npm test
 ```
 
+## Demo login account
+
+A test user is seeded on server start for local development:
+
+| Field | Value |
+|-------|-------|
+| Email | `demo@timetracker.test` |
+| Password | `Demo1234!` |
+| User ID | `user-demo-1` |
+
+```bash
+curl -X POST http://localhost:4000/api/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"demo@timetracker.test","password":"Demo1234!"}'
+```
+
+Or fetch credentials: `GET /api/auth/demo-account`
+
+Use the returned `token` as `Authorization: Bearer <token>` on protected routes.
+The demo user's `userId` matches the timeline API (`GET /api/timeline?userId=user-demo-1`).
+
 ## Endpoints
 
 | Method | Path | Owner | Notes |
 |--------|------|-------|-------|
 | GET  | `/health` | — | `{ ok: true }` |
+| POST | `/api/auth/login` | Auth | `{ email, password }` → `{ token, user }` |
+| POST | `/api/auth/signup` | Auth | `{ fullName, email, password }` → `{ token, user }` |
+| GET  | `/api/auth/me` | Auth | `Authorization: Bearer <token>` |
+| GET  | `/api/auth/demo-account` | Auth | Returns seeded test credentials |
 | POST | `/api/events` | Samar | Single event or `{ events: [...] }` |
 | GET  | `/api/timeline` | Samar | Requires `userId`; demo fallback when empty |
 | POST | `/api/events/seed` | Samar | Dev helper — loads mock events |
@@ -55,14 +80,17 @@ npm test
   "confidence": 0.6, "raw": "From 9 to 10:30 I worked on the dashboard" }
 ```
 
-## Files
-
 Activity / timeline (Samar):
 - `src/services/redisClient.js` — Redis list helpers + in-memory fallback
 - `src/services/activityStore.js` — `events:{userId}:{YYYY-MM-DD}` keys
 - `src/services/aggregationService.js` — hour bucketing for timeline
 - `src/routes/activity.js` — REST handlers
 - `src/data/sampleActivityEvents.js`, `src/data/demoTimeline.json` — mock data
+
+Auth:
+- `src/services/authService.js` — users, bcrypt passwords, JWT sessions, demo seed
+- `src/routes/auth.js` — login, signup, me
+- `src/middleware/authMiddleware.js` — Bearer token guard
 
 AI / voice (Allison):
 - `src/services/deepgramService.js` — Deepgram STT wrapper; pure `extractTranscript`/`extractWords` helpers

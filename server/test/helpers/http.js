@@ -21,12 +21,15 @@ export async function stopTestServer() {
   baseUrl = null;
 }
 
-export async function request(path, { method = 'GET', body } = {}) {
+export async function request(path, { method = 'GET', body, headers = {} } = {}) {
   if (!baseUrl) throw new Error('Call startTestServer() first');
 
   const res = await fetch(`${baseUrl}${path}`, {
     method,
-    headers: body ? { 'Content-Type': 'application/json' } : undefined,
+    headers: {
+      ...(body ? { 'Content-Type': 'application/json' } : {}),
+      ...headers,
+    },
     body: body ? JSON.stringify(body) : undefined,
   });
 
