@@ -55,7 +55,7 @@ describe('aggregationService', () => {
     assert.ok(result.totalTrackedSec > 10000);
   });
 
-  it('merges duplicate activities within the same hour', () => {
+  it('keeps distinct stored events separate even when activity matches', () => {
     const events = [
       {
         id: 'a',
@@ -76,8 +76,9 @@ describe('aggregationService', () => {
     ];
 
     const hour11 = aggregateTimeline(events, DATE, { userId: USER }).hours[11];
-    assert.equal(hour11.blocks.length, 1);
-    assert.equal(hour11.blocks[0].durationSec, 2100);
+    assert.equal(hour11.blocks.length, 2);
+    assert.equal(hour11.blocks[0].eventId, 'a');
+    assert.equal(hour11.blocks[1].eventId, 'b');
   });
 
   it('includes full event span metadata on overnight blocks', () => {

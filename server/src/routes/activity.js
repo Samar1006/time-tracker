@@ -8,8 +8,10 @@ import {
   appendEvents,
   clearEvents,
   countEvents,
+  findEventOnDay,
   loadEvents,
   loadMonthDayTotals,
+  replaceEvent,
 } from '../services/activityStore.js';
 import {
   aggregateTimeline,
@@ -17,6 +19,7 @@ import {
   todayUtcDate,
   eventOverlapsLocalDate,
   addDaysISO,
+  localDateString,
 } from '../services/aggregationService.js';
 import { getStorageMode } from '../services/redisClient.js';
 import { sampleActivityEvents } from '../data/sampleActivityEvents.js';
@@ -231,6 +234,87 @@ router.get('/timeline', requireAuth, async (req, res, next) => {
     }
 
     res.json(aggregateTimeline(events, date, { userId, timezone }));
+  } catch (err) {
+    next(err);
+  }
+});
+
+const MIN_PATCH_DURATION_SEC = 5 * 60;
+
+function syncEventLocalMetadata(event, timeZone) {
+  const localDate = parseDateOnly(event.metadata?.localDate) ?? parseDateOnly(event.timestamp);
+  if (!localDate) return event;
+
+  const startMs = Date.parse(event.timestamp);
+  const durationSec = Number(event.durationSec) > 0 ? Number(event.durationSec) : 300;
+  const endMs = startMs + durationSec * 1000;
+
+  const startDay = localDateString(startMs, timeZone);
+  const endDay = localDateString(endMs, timeZone);
+  const metadata = { ...(event.metadata ?? {}), localDate: startDay };
+
+  if (endDay > startDay) {
+    metadata.endLocalDate = endDay;
+  } else {
+    delete metadata.endLocalDate;
+  }
+
+  return { ...event, metadata };
+}
+
+async function locateStoredEvent(userId, eventId, dateHint) {
+  const seeds = new Set([dateHint].filter(Boolean));
+  if (dateHint) {
+    for (let offset = -14; offset <= 14; offset += 1) {
+      seeds.add(addDaysISO(dateHint, offset));
+    }
+  }
+
+  for (const date of seeds) {
+    const located = await findEventOnDay(userId, date, eventId);
+    if (located) return located;
+  }
+  return null;
+}
+
+router.patch('/events/:eventId', requireAuth, async (req, res, next) => {
+  try {
+    const { eventId } = req.params;
+    const userId = req.user.id;
+    const { timestamp, durationSec, metadata } = req.body ?? {};
+
+    if (!timestamp || !Number.isFinite(Date.parse(timestamp))) {
+      return res.status(400).json({ error: 'Provide a valid timestamp (ISO 8601).' });
+    }
+    if (durationSec == null || !Number.isFinite(Number(durationSec)) || Number(durationSec) < MIN_PATCH_DURATION_SEC) {
+      return res.status(400).json({ error: `durationSec must be at least ${MIN_PATCH_DURATION_SEC}.` });
+    }
+
+    const dateHint = parseDateOnly(metadata?.localDate) ?? parseDateOnly(timestamp);
+    const located = await locateStoredEvent(userId, eventId, dateHint);
+    if (!located) {
+      return res.status(404).json({ error: 'Event not found.' });
+    }
+
+    const timezone = req.query.timezone || 'UTC';
+    const updated = syncEventLocalMetadata(
+      {
+        ...located.event,
+        timestamp: new Date(Date.parse(timestamp)).toISOString(),
+        durationSec: Math.round(Number(durationSec)),
+        metadata: metadata && typeof metadata === 'object'
+          ? { ...(located.event.metadata ?? {}), ...metadata }
+          : located.event.metadata,
+      },
+      timezone,
+    );
+
+    const saved = await replaceEvent(userId, located.storageDate, eventId, updated);
+    if (!saved) {
+      return res.status(404).json({ error: 'Event not found.' });
+    }
+
+    res.json({ event: saved });
   } catch (err) {
     next(err);
   }

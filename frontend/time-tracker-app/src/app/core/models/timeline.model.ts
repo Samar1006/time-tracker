@@ -17,6 +17,8 @@ export interface TimelineBlock {
   spansNextDay?: boolean;
   /** Event started on the previous calendar day. */
   spansFromPrevDay?: boolean;
+  /** Stored raw event id when block maps to a persisted event. */
+  eventId?: string;
   activity: string;
   category: ActivityCategory;
   source: string;

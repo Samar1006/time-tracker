@@ -17,6 +17,7 @@ import { TimelineService } from '../../../../core/services/timeline.service';
 import { VoiceLogService } from '../../../../core/services/voice-log.service';
 import { AppShellComponent } from '../../../../shared/layouts/app-shell/app-shell.component';
 import { TimelineChartComponent } from '../../components/timeline-chart/timeline-chart.component';
+import { EventTimePatch } from '../../components/timeline-chart/timeline-drag.util';
 import {
   getVisibleHours,
   shiftDate,

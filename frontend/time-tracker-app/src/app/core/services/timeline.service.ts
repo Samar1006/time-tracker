@@ -5,6 +5,21 @@ import { Observable } from 'rxjs';
 import { environment } from '../../../environments/environment';
 import { MonthSummaryResponse, TimelineResponse } from '../models/timeline.model';
 
+export interface EventPatchPayload {
+  timestamp: string;
+  durationSec: number;
+  metadata?: { localDate: string; endLocalDate?: string };
+}
+
+export interface EventPatchResponse {
+  event: {
+    id: string;
+    timestamp: string;
+    durationSec: number;
+    metadata?: Record<string, unknown>;
+  };
+}
+
 @Injectable({ providedIn: 'root' })
 export class TimelineService {
   private readonly http = inject(HttpClient);
@@ -27,5 +42,15 @@ export class TimelineService {
     return this.http.get<MonthSummaryResponse>(`${environment.apiUrl}/api/timeline/summary`, {
       params
     });
+  }
+
+  updateEvent(eventId: string, payload: EventPatchPayload): Observable<EventPatchResponse> {
+    const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const params = new HttpParams().set('timezone', timezone);
+    return this.http.patch<EventPatchResponse>(
+      `${environment.apiUrl}/api/events/${encodeURIComponent(eventId)}`,
+      payload,
+      { params }
+    );
   }
 }

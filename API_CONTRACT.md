@@ -89,6 +89,7 @@ Returned by `GET /api/timeline` for the hour-by-hour bar visualization.
         {
           "start": "2026-06-20T09:00:00.000Z",
           "end": "2026-06-20T10:00:00.000Z",
+          "eventId": "evt_abc123",
           "activity": "Visual Studio Code",
           "category": "work",
           "source": "tracked",
@@ -103,9 +104,11 @@ Returned by `GET /api/timeline` for the hour-by-hour bar visualization.
 
 | Field | Notes |
 |-------|-------|
+| `eventId` | Stored raw event id when the block maps to a persisted event; omitted for demo/aggregated slices |
 | `source` | `tracked` \| `voice` \| `manual` \| `demo` |
 | `category` | From [Category enum](#category-enum) |
 | `confidence` | 0–1 |
+| `eventId` | Optional — stored raw event id when block maps to a persisted event (for drag-edit) |
 
 ### Schedule block (voice / AI)
 
@@ -224,6 +227,43 @@ curl -s -X POST http://localhost:4000/api/events \
 
 ---
 
+#### `PATCH /api/events/:eventId`
+
+**Status:** ✅ Implemented on `main`  
+**Owner:** Samar / Frontend
+
+**Headers:** `Authorization: Bearer <token>` (required)
+
+**Query params:**
+
+| Param | Required | Default |
+|-------|----------|---------|
+| `timezone` | No | `UTC` |
+
+**Request body:**
+
+```json
+{
+  "timestamp": "2026-06-20T14:00:00.000Z",
+  "durationSec": 3600,
+  "metadata": { "localDate": "2026-06-20" }
+}
+```
+
+| Field | Required | Notes |
+|-------|----------|-------|
+| `timestamp` | **Yes** | ISO 8601 UTC — new interval start |
+| `durationSec` | **Yes** | Minimum 300 (5 minutes) |
+| `metadata` | No | Merged with existing metadata; `localDate` helps locate the event |
+
+**Success:** `200` — `{ "event": { "id", "timestamp", "durationSec", "metadata", ... } }`
+
+**Errors:** `401`, `400` (invalid body), `404` (event not found)
+
+Used by dashboard drag-to-move and resize on timeline blocks with `eventId`.
+
+---
+
 #### `GET /api/timeline`
 
 **Status:** ✅ Implemented on `ingestion-timeline`  
@@ -244,6 +284,44 @@ curl -s -X POST http://localhost:4000/api/events \
 **Errors:** `401` (missing/invalid token), `403` (`userId` query ≠ token user)
 
 **Demo fallback:** Returns padded `demoTimeline.json` when no stored events exist.
+
+---
+
+#### `PATCH /api/events/:eventId`
+
+**Status:** ✅ Implemented on `timeline-drag-edit`  
+**Owner:** Samar
+
+**Headers:** `Authorization: Bearer <token>` (required)
+
+**Path:** `eventId` — id of the stored raw event (see `eventId` on [timeline blocks](#timeline-hour-bucket)).
+
+**Query:** `timezone` (optional, default `UTC`) — used to sync `metadata.localDate` / `endLocalDate`.
+
+**Request body:**
+
+```json
+{
+  "timestamp": "2026-06-20T14:00:00.000Z",
+  "durationSec": 3600,
+  "metadata": {
+    "localDate": "2026-06-20",
+    "endLocalDate": "2026-06-21"
+  }
+}
+```
+
+| Field | Required | Notes |
+|-------|----------|-------|
+| `timestamp` | **Yes** | ISO 8601 UTC — new event start |
+| `durationSec` | **Yes** | Min 300 (5 minutes) |
+| `metadata` | No | `localDate` / `endLocalDate` for overnight spans |
+
+**Success:** `200` — `{ "event": StoredEvent }`
+
+**Errors:** `400` (invalid body), `401`, `404` (event not found)
+
+Used by timeline drag-and-resize UI. Does **not** parse natural language — use `POST /api/schedule/mutate` for voice edits.
 
 ---
 
