@@ -10,6 +10,7 @@ test('parses a time range into a block with start/end', () => {
   assert.equal(blocks[0].end, '10:30');
   assert.equal(blocks[0].durationMin, 90);
   assert.equal(blocks[0].category, 'work');
+  assert.match(blocks[0].activity, /dashboard/i);
 });
 
 test('derives end time from a spoken duration', () => {
@@ -24,6 +25,48 @@ test('handles am/pm and noon context', () => {
   assert.equal(blocks[0].start, '13:00');
   assert.equal(blocks[0].end, '13:30');
   assert.equal(blocks[0].category, 'communication');
+  assert.match(blocks[0].activity, /email/i);
+});
+
+test('parses "until" as end time and chains from previous block', () => {
+  const { blocks } = parseTranscript(sampleTranscripts[3].text);
+  assert.equal(blocks.length, 2);
+  assert.equal(blocks[0].end, '10:30');
+  assert.equal(blocks[1].start, '10:30');
+  assert.equal(blocks[1].end, '11:00');
+  assert.equal(blocks[1].category, 'communication');
+  assert.match(blocks[1].activity, /standup/i);
+});
+
+test('infers times for duration-only segments from prior end', () => {
+  const { blocks } = parseTranscript(sampleTranscripts[4].text);
+  assert.equal(blocks[0].start, null);
+  assert.equal(blocks[0].end, null);
+  assert.equal(blocks[0].durationMin, 120);
+  assert.match(blocks[0].activity, /debugging/i);
+  assert.equal(blocks[1].start, null);
+  assert.equal(blocks[1].end, null);
+  assert.equal(blocks[1].durationMin, 30);
+});
+
+test('after lunch without clock time gets implicit start and duration', () => {
+  const { blocks } = parseTranscript(sampleTranscripts[5].text);
+  assert.equal(blocks[0].start, '13:00');
+  assert.equal(blocks[0].end, '13:30');
+  assert.equal(blocks[0].durationMin, 30);
+  assert.match(blocks[0].activity, /email/i);
+});
+
+test('multi-clause morning transcript chains standup and lunch blocks', () => {
+  const { blocks } = parseTranscript(sampleTranscripts[6].text);
+  assert.equal(blocks.length, 3);
+  assert.equal(blocks[0].start, '09:00');
+  assert.equal(blocks[0].end, '10:00');
+  assert.equal(blocks[1].start, '10:00');
+  assert.equal(blocks[1].end, '11:00');
+  assert.equal(blocks[1].category, 'communication');
+  assert.equal(blocks[2].start, '13:00');
+  assert.equal(blocks[2].end, '13:30');
 });
 
 test('full sample workday yields multiple labeled blocks', () => {
@@ -31,13 +74,16 @@ test('full sample workday yields multiple labeled blocks', () => {
   assert.ok(blocks.length >= 4, `expected >=4 blocks, got ${blocks.length}`);
   const cats = new Set(blocks.map((b) => b.category));
   assert.ok(cats.has('work'));
+  assert.ok(cats.has('communication'));
   assert.ok(cats.has('entertainment'));
+  assert.ok(blocks.some((b) => b.activity.includes('debugging')));
 });
 
 test('transcript with no times still produces categorized blocks', () => {
   const { blocks } = parseTranscript(sampleTranscripts[2].text);
   assert.ok(blocks.length >= 1);
   assert.ok(blocks.every((b) => typeof b.category === 'string'));
+  assert.ok(blocks.every((b) => b.activity !== '(unspecified)'));
 });
 
 test('empty transcript returns no blocks', () => {

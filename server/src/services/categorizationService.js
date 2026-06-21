@@ -11,13 +11,15 @@
 export const CATEGORIES = {
   work: {
     keywords: ['work', 'coding', 'code', 'develop', 'debug', 'api', 'backend',
-      'frontend', 'deploy', 'pull request', 'pr ', 'review', 'standup', 'meeting',
+      'frontend', 'deploy', 'pull request', 'pr ', 'review', 'dashboard',
       'jira', 'ticket', 'sprint', 'design', 'spec', 'build', 'refactor'],
     domains: ['github.com', 'gitlab.com', 'jira.com', 'atlassian.net', 'figma.com',
       'notion.so', 'stackoverflow.com', 'localhost'],
   },
   communication: {
-    keywords: ['email', 'slack', 'message', 'call', 'zoom', 'chat', 'reply', 'inbox'],
+    keywords: ['email', 'emails', 'slack', 'message', 'call', 'zoom', 'chat', 'reply',
+      'replied', 'inbox', 'standup', 'stand-up', 'stand up', 'sync', 'huddle',
+      'meeting', '1:1', 'one on one', 'teams call', 'answered emails'],
     domains: ['gmail.com', 'mail.google.com', 'slack.com', 'zoom.us', 'outlook.com',
       'teams.microsoft.com'],
   },

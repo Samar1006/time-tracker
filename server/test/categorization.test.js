@@ -29,6 +29,8 @@ test('categorizeText labels obvious activities', () => {
   assert.equal(categorizeText('debugging the backend api').category, 'work');
   assert.equal(categorizeText('took a coffee break').category, 'break');
   assert.equal(categorizeText('watched youtube videos').category, 'entertainment');
+  assert.equal(categorizeText('had a standup meeting').category, 'communication');
+  assert.equal(categorizeText('answered emails').category, 'communication');
   assert.equal(categorizeText('').category, 'uncategorized');
 });
 
