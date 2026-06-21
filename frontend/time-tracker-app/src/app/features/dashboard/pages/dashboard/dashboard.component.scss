@@ -22,13 +22,6 @@
   gap: 1rem;
 }
 
-.dashboard-panels {
-  display: grid;
-  grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
-  gap: 1.5rem;
-  align-items: start;
-}
-
 .dashboard-timeline-wrap {
   display: flex;
   flex-direction: column;
@@ -102,10 +95,6 @@
   }
 
   .dashboard-stats {
-    grid-template-columns: 1fr;
-  }
-
-  .dashboard-panels {
     grid-template-columns: 1fr;
   }
 

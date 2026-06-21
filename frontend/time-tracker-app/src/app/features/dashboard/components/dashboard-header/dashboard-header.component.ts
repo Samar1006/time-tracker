@@ -1,4 +1,4 @@
-import { Component, inject, input, output } from '@angular/core';
+import { Component, inject } from '@angular/core';
 import { Router } from '@angular/router';
 
 import { AuthService } from '../../../../core/services/auth.service';
@@ -13,9 +13,6 @@ export class DashboardHeaderComponent {
   private readonly router = inject(Router);
 
   readonly user = this.auth.user;
-  readonly displayDate = input.required<string>();
-  readonly prevDay = output<void>();
-  readonly nextDay = output<void>();
 
   initials(): string {
     return this.auth.initials();

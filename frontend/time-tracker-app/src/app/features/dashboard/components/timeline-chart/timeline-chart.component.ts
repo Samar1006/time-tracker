@@ -1,4 +1,4 @@
-import { Component, computed, input, signal } from '@angular/core';
+import { Component, computed, input, output, signal } from '@angular/core';
 
 import {
   CATEGORY_COLORS,
@@ -149,6 +149,10 @@ export class TimelineChartComponent {
   readonly hours = input.required<TimelineHour[]>();
   readonly date = input.required<string>();
 
+  readonly prevDay = output<void>();
+  readonly nextDay = output<void>();
+  readonly selectDate = output<string>();
+
   readonly tooltip = signal<TooltipState | null>(null);
   readonly categoryLegend = CATEGORY_LEGEND;
   readonly categoryLabels = CATEGORY_LABELS;
@@ -250,5 +254,12 @@ export class TimelineChartComponent {
   blockTrackKey(positioned: PositionedBlock): string {
     const { block } = positioned;
     return `${block.start}|${block.end}|${block.activity}|${block.category}`;
+  }
+
+  onDatePick(event: Event): void {
+    const value = (event.target as HTMLInputElement).value;
+    if (value) {
+      this.selectDate.emit(value);
+    }
   }
 }
