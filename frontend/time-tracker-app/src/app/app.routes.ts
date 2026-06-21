@@ -24,6 +24,20 @@ export const routes: Routes = [
       )
   },
   {
+    path: 'stats',
+    canActivate: [authGuard],
+    loadComponent: () =>
+      import('./features/stats/pages/stats/stats.component').then((m) => m.StatsComponent)
+  },
+  {
+    path: 'settings',
+    canActivate: [authGuard],
+    loadComponent: () =>
+      import('./features/settings/pages/settings/settings.component').then(
+        (m) => m.SettingsComponent
+      )
+  },
+  {
     path: '',
     redirectTo: 'dashboard',
     pathMatch: 'full'

@@ -1,0 +1,66 @@
+<app-shell [userId]="userId()?.userId ?? null">
+  <header class="settings-header">
+    <div>
+      <h1 class="settings-header__title">Settings</h1>
+      <p class="settings-header__subtitle">
+        Customize how AI categorizes your time when you log activities by voice.
+      </p>
+    </div>
+    @if (saved()) {
+      <p class="settings-header__saved" role="status">Saved</p>
+    }
+  </header>
+
+  <section class="settings-panel">
+    <h2 class="settings-panel__title">Category preferences</h2>
+    <p class="settings-panel__hint">
+      Describe what each category means for you. Optional keywords help the AI map your
+      activities more accurately during voice parsing.
+    </p>
+
+    <form class="settings-form" (ngSubmit)="save()">
+      @for (pref of preferences(); track pref.category; let i = $index) {
+        <fieldset class="settings-category">
+          <legend class="settings-category__legend">
+            <span
+              class="settings-category__dot"
+              [style.background]="categoryColors[pref.category]"
+            ></span>
+            {{ pref.label }}
+          </legend>
+
+          <label class="settings-field">
+            <span class="settings-field__label">Description</span>
+            <textarea
+              class="settings-field__input settings-field__input--textarea"
+              rows="2"
+              [ngModel]="pref.description"
+              (ngModelChange)="updateDescription(i, $event)"
+              [name]="'description-' + pref.category"
+              placeholder="What counts as {{ pref.label | lowercase }} for you?"
+            ></textarea>
+          </label>
+
+          <label class="settings-field">
+            <span class="settings-field__label">Keyword hints (optional)</span>
+            <input
+              class="settings-field__input"
+              type="text"
+              [ngModel]="pref.keywords"
+              (ngModelChange)="updateKeywords(i, $event)"
+              [name]="'keywords-' + pref.category"
+              placeholder="e.g. standup, jira, pull request"
+            />
+          </label>
+        </fieldset>
+      }
+
+      <div class="settings-actions">
+        <button type="submit" class="settings-actions__primary">Save preferences</button>
+        <button type="button" class="settings-actions__secondary" (click)="reset()">
+          Reset to defaults
+        </button>
+      </div>
+    </form>
+  </section>
+</app-shell>

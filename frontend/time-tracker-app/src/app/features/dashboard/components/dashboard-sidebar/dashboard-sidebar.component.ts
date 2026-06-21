@@ -1,9 +1,9 @@
 import { Component, inject } from '@angular/core';
-import { RouterLink } from '@angular/router';
+import { RouterLink, RouterLinkActive } from '@angular/router';
 
 @Component({
   selector: 'app-dashboard-sidebar',
-  imports: [RouterLink],
+  imports: [RouterLink, RouterLinkActive],
   templateUrl: './dashboard-sidebar.component.html',
   styleUrl: './dashboard-sidebar.component.scss'
 })

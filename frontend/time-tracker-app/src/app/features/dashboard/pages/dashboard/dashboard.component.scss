@@ -1,21 +1,3 @@
-.dashboard-shell {
-  min-height: 100dvh;
-  background: #f9fafb;
-}
-
-.dashboard-shell__body {
-  display: flex;
-  min-height: calc(100dvh - 73px);
-}
-
-.dashboard-shell__main {
-  flex: 1;
-  padding: 1.5rem;
-  display: flex;
-  flex-direction: column;
-  gap: 1.5rem;
-}
-
 .dashboard-stats {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -75,7 +57,7 @@
   color: #dc2626;
 }
 
-.dashboard-shell__status {
+.dashboard-status {
   margin: 0;
   padding: 2rem;
   text-align: center;
@@ -90,10 +72,6 @@
 }
 
 @media (max-width: 960px) {
-  .dashboard-shell__body {
-    flex-direction: column;
-  }
-
   .dashboard-stats {
     grid-template-columns: 1fr;
   }

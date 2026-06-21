@@ -15,8 +15,7 @@ import { toObservable, toSignal } from '@angular/core/rxjs-interop';
 import { AuthService } from '../../../../core/services/auth.service';
 import { TimelineService } from '../../../../core/services/timeline.service';
 import { VoiceLogService } from '../../../../core/services/voice-log.service';
-import { DashboardHeaderComponent } from '../../components/dashboard-header/dashboard-header.component';
-import { DashboardSidebarComponent } from '../../components/dashboard-sidebar/dashboard-sidebar.component';
+import { AppShellComponent } from '../../../../shared/layouts/app-shell/app-shell.component';
 import { StatCardComponent } from '../../components/stat-card/stat-card.component';
 import { TimelineChartComponent } from '../../components/timeline-chart/timeline-chart.component';
 import {
@@ -32,8 +31,7 @@ const REFRESH_MS = 60_000;
 @Component({
   selector: 'app-dashboard',
   imports: [
-    DashboardHeaderComponent,
-    DashboardSidebarComponent,
+    AppShellComponent,
     StatCardComponent,
     TimelineChartComponent
   ],

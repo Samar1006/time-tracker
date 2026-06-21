@@ -1,0 +1,103 @@
+<app-shell [userId]="userId()">
+  <header class="stats-header">
+    <div>
+      <h1 class="stats-header__title">Stats</h1>
+      <p class="stats-header__subtitle">Track how you spend your time</p>
+    </div>
+
+    <div class="stats-period" role="tablist" aria-label="Stats period">
+      <button
+        type="button"
+        class="stats-period__btn"
+        [class.stats-period__btn--active]="period() === 'day'"
+        role="tab"
+        [attr.aria-selected]="period() === 'day'"
+        (click)="setPeriod('day')"
+      >
+        Day
+      </button>
+      <button
+        type="button"
+        class="stats-period__btn"
+        [class.stats-period__btn--active]="period() === 'week'"
+        role="tab"
+        [attr.aria-selected]="period() === 'week'"
+        (click)="setPeriod('week')"
+      >
+        Week
+      </button>
+      <button
+        type="button"
+        class="stats-period__btn"
+        [class.stats-period__btn--active]="period() === 'month'"
+        role="tab"
+        [attr.aria-selected]="period() === 'month'"
+        (click)="setPeriod('month')"
+      >
+        Month
+      </button>
+    </div>
+  </header>
+
+  @if (loading()) {
+    <p class="stats-status">Loading stats…</p>
+  } @else if (error()) {
+    <p class="stats-status stats-status--error">{{ error() }}</p>
+  } @else {
+    <section class="stats-cards">
+      <app-stat-card label="Today" [value]="dayTotal()" icon="clock" />
+      <app-stat-card label="This week" [value]="weekTotal()" icon="chart" />
+      <app-stat-card label="This month" [value]="monthTotal()" icon="star" />
+    </section>
+
+    <section class="stats-panel">
+      <h2 class="stats-panel__title">
+        @switch (period()) {
+          @case ('day') { Today }
+          @case ('week') { This week }
+          @case ('month') { This month }
+        }
+        — {{ periodTotal() }} tracked
+      </h2>
+
+      @if (categoryBreakdown().length === 0) {
+        <p class="stats-empty">No activity data for this period yet.</p>
+      } @else {
+        <div class="stats-breakdown">
+          <h3 class="stats-breakdown__heading">Time by category</h3>
+          <ul class="stats-breakdown__list">
+            @for (item of categoryBreakdown(); track item.category) {
+              <li class="stats-breakdown__item">
+                <div class="stats-breakdown__label-row">
+                  <span class="stats-breakdown__dot" [style.background]="categoryColors[item.category]"></span>
+                  <span class="stats-breakdown__label">{{ item.label }}</span>
+                  <span class="stats-breakdown__value">{{ item.percent.toFixed(0) }}%</span>
+                  <span class="stats-breakdown__duration">{{ formatDuration(item.seconds) }}</span>
+                </div>
+                <div class="stats-breakdown__bar-track">
+                  <div
+                    class="stats-breakdown__bar-fill"
+                    [style.width.%]="item.percent"
+                    [style.background]="categoryColors[item.category]"
+                  ></div>
+                </div>
+              </li>
+            }
+          </ul>
+        </div>
+
+        <div class="stats-top">
+          <h3 class="stats-top__heading">Top activities</h3>
+          <ul class="stats-top__list">
+            @for (item of topActivities(); track item.activity) {
+              <li class="stats-top__item">
+                <span class="stats-top__name">{{ item.activity }}</span>
+                <span class="stats-top__duration">{{ formatDuration(item.seconds) }}</span>
+              </li>
+            }
+          </ul>
+        </div>
+      }
+    </section>
+  }
+</app-shell>

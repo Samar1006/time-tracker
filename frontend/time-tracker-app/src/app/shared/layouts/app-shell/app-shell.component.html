@@ -1,0 +1,11 @@
+<div class="app-shell" [attr.data-tracker-user-id]="userId()">
+  <app-dashboard-header />
+
+  <div class="app-shell__body">
+    <app-dashboard-sidebar />
+
+    <main class="app-shell__main">
+      <ng-content />
+    </main>
+  </div>
+</div>
