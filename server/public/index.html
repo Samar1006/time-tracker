@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Time Tracker — AI Pipeline Demo</title>
+<style>
+  :root {
+    --bg: #0f1220; --card: #1a1f33; --line: #2a3048; --text: #e7ebf5;
+    --muted: #9aa3bd; --accent: #6c8cff;
+    --work: #6c8cff; --communication: #f0a35e; --learning: #4cc4a3;
+    --entertainment: #d96cc0; --break: #7bd16c; --uncategorized: #8893ad;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background: var(--bg); color: var(--text); padding: 32px 16px;
+  }
+  .wrap { max-width: 760px; margin: 0 auto; }
+  h1 { font-size: 24px; margin: 0 0 4px; }
+  .sub { color: var(--muted); margin: 0 0 24px; }
+  textarea {
+    width: 100%; min-height: 110px; resize: vertical; padding: 12px 14px;
+    background: var(--card); color: var(--text); border: 1px solid var(--line);
+    border-radius: 10px; font: inherit;
+  }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 12px 0; }
+  button {
+    background: var(--accent); color: #fff; border: 0; padding: 10px 18px;
+    border-radius: 9px; font: inherit; font-weight: 600; cursor: pointer;
+  }
+  button.ghost { background: transparent; border: 1px solid var(--line); color: var(--muted); font-weight: 500; }
+  button:disabled { opacity: .5; cursor: default; }
+  label.chk { color: var(--muted); display: inline-flex; gap: 6px; align-items: center; cursor: pointer; }
+  .samples { font-size: 13px; }
+  .blocks { margin-top: 20px; display: grid; gap: 10px; }
+  .block {
+    display: grid; grid-template-columns: 92px 1fr auto; gap: 12px; align-items: center;
+    background: var(--card); border: 1px solid var(--line); border-left: 4px solid var(--accent);
+    border-radius: 10px; padding: 12px 14px;
+  }
+  .time { font-variant-numeric: tabular-nums; color: var(--text); font-weight: 600; }
+  .time small { display: block; color: var(--muted); font-weight: 400; font-size: 12px; }
+  .activity { color: var(--text); }
+  .cat { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; padding: 4px 10px; border-radius: 999px; }
+  .empty, .err { color: var(--muted); margin-top: 20px; }
+  .err { color: #ff8b8b; }
+  .foot { margin-top: 28px; color: var(--muted); font-size: 13px; border-top: 1px solid var(--line); padding-top: 14px; }
+  code { background: var(--card); padding: 1px 6px; border-radius: 5px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>🕒 Time Tracker — AI Pipeline</h1>
+  <p class="sub">Describe your day in plain language. The AI turns it into a structured schedule and labels each activity.</p>
+
+  <textarea id="transcript" placeholder="e.g. From 9 to 10:30 I worked on the dashboard. Then I had a standup until 11. After lunch around 1pm I answered emails for 30 minutes. At 4 I took a coffee break and browsed youtube."></textarea>
+
+  <div class="row samples">
+    <span style="color:var(--muted)">Try:</span>
+    <button class="ghost" data-sample="workday">a workday</button>
+    <button class="ghost" data-sample="study">a study evening</button>
+    <button class="ghost" data-sample="sparse">no times</button>
+  </div>
+
+  <div class="row">
+    <button id="parse">Parse my day →</button>
+    <label class="chk"><input type="checkbox" id="useLLM" /> Use Claude (needs API key)</label>
+  </div>
+
+  <div id="out" class="blocks"></div>
+  <p id="empty" class="empty">Your schedule will appear here.</p>
+
+  <div class="foot">
+    Powered by <code>POST /api/schedule/parse</code>. Voice input (<code>/api/transcribe</code>)
+    is wired and unlocks once a Deepgram key is set.
+  </div>
+</div>
+
+<script>
+  const SAMPLES = {
+    workday: "From 9 to 10:30 I worked on the frontend dashboard. Then I had a standup until 11. After that I spent two hours debugging the API. After lunch around 1pm I answered emails for 30 minutes. At 4 I took a coffee break and browsed youtube.",
+    study: "At 7pm I read documentation for an hour. Then I watched a tutorial until 9. After that I played a game for 45 minutes.",
+    sparse: "I worked on code, then took a break, then replied to slack.",
+  };
+  const CAT_COLORS = {
+    work: "var(--work)", communication: "var(--communication)", learning: "var(--learning)",
+    entertainment: "var(--entertainment)", break: "var(--break)", uncategorized: "var(--uncategorized)",
+  };
+
+  const $ = (id) => document.getElementById(id);
+  const ta = $("transcript"), out = $("out"), empty = $("empty");
+
+  document.querySelectorAll("[data-sample]").forEach((b) => {
+    b.onclick = () => { ta.value = SAMPLES[b.dataset.sample]; };
+  });
+
+  $("parse").onclick = async () => {
+    const transcript = ta.value.trim();
+    out.innerHTML = ""; empty.className = "empty";
+    if (!transcript) { empty.textContent = "Type or pick a sample first."; return; }
+    empty.textContent = "Parsing…";
+    try {
+      const res = await fetch("/api/schedule/parse", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ transcript, useLLM: $("useLLM").checked }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Request failed");
+      render(data.blocks || []);
+    } catch (e) {
+      empty.className = "err"; empty.textContent = "Error: " + e.message;
+    }
+  };
+
+  function render(blocks) {
+    if (!blocks.length) { empty.textContent = "No activities found — try adding times."; return; }
+    empty.textContent = "";
+    out.innerHTML = blocks.map((b) => {
+      const color = CAT_COLORS[b.category] || CAT_COLORS.uncategorized;
+      const start = b.start || "—", end = b.end ? "–" + b.end : "";
+      const dur = b.durationMin ? `${b.durationMin} min` : "";
+      return `<div class="block" style="border-left-color:${color}">
+        <div class="time">${start}<small>${end} ${dur}</small></div>
+        <div class="activity">${escapeHtml(b.activity)}</div>
+        <div class="cat" style="background:${color}22;color:${color}">${b.category}</div>
+      </div>`;
+    }).join("");
+  }
+  function escapeHtml(s) { const d = document.createElement("div"); d.textContent = s; return d.innerHTML; }
+</script>
+</body>
+</html>

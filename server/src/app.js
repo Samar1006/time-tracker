@@ -2,6 +2,8 @@
 // import the app without binding a port.
 import express from 'express';
 import cors from 'cors';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import activityRouter from './routes/activity.js';
 import authRouter from './routes/auth.js';
 import scheduleRouter from './routes/schedule.js';
@@ -14,6 +16,10 @@ export function createApp() {
   app.use(express.json({ limit: '2mb' }));
 
   app.get('/health', (_req, res) => res.json({ ok: true }));
+
+  // Static demo page for the AI pipeline — open http://localhost:4000/demo
+  const __dirname = path.dirname(fileURLToPath(import.meta.url));
+  app.use('/demo', express.static(path.join(__dirname, '..', 'public')));
 
   // Auth — login, signup, JWT sessions.
   app.use('/api/auth', authRouter);
