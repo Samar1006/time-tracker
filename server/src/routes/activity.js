@@ -8,6 +8,7 @@ import {
   appendEvents,
   clearEvents,
   countEvents,
+  deleteStoredEvent,
   findEventOnDay,
   loadEvents,
   loadMonthDayTotals,
@@ -322,6 +323,33 @@ router.patch('/events/:eventId', requireAuth, async (req, res, next) => {
     }
 
     res.json({ event: saved });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.delete('/events/:eventId', requireAuth, async (req, res, next) => {
+  try {
+    const { eventId } = req.params;
+    const userId = req.user.id;
+    const dateHint = parseDateOnly(req.query.date) ?? parseDateOnly(req.query.localDate);
+    const located = await locateStoredEvent(userId, eventId, dateHint);
+    if (!located) {
+      return res.status(404).json({ error: 'Event not found.' });
+    }
+    if (!isUserEditableEvent(located.event)) {
+      return res.status(403).json({
+        error: 'Tracked browser activity cannot be deleted.',
+        code: 'EVENT_NOT_EDITABLE',
+      });
+    }
+
+    const deleted = await deleteStoredEvent(userId, eventId, dateHint ?? located.storageDate);
+    if (!deleted) {
+      return res.status(404).json({ error: 'Event not found.' });
+    }
+
+    res.json({ deleted: true, eventId });
   } catch (err) {
     next(err);
   }

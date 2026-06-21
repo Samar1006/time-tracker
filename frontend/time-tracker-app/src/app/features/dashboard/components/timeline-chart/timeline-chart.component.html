@@ -107,6 +107,7 @@
                 [class.day-calendar__event--continues-prev-day]="blockContinuesFromPrevDay(positioned.block)"
                 [class.day-calendar__event--drag-source]="isDraggingBlock(positioned)"
                 (pointerdown)="onBlockPointerDown($event, positioned)"
+                (contextmenu)="onBlockContextMenu($event, positioned)"
                 (mouseenter)="showBlockTooltip(positioned, $event)"
                 (mouseleave)="hideTooltip()"
                 [attr.aria-label]="categoryLabels[positioned.block.category] + ', ' + formatTimeRange(positioned.block)"
@@ -220,6 +221,25 @@
       </span>
     }
   </footer>
+
+  @if (contextMenu(); as menu) {
+    <div
+      class="day-calendar__context-menu"
+      role="menu"
+      [style.left.px]="menu.x"
+      [style.top.px]="menu.y"
+      (click)="$event.stopPropagation()"
+    >
+      <button
+        type="button"
+        class="day-calendar__context-menu-item day-calendar__context-menu-item--danger"
+        role="menuitem"
+        (click)="confirmDeleteBlock($event)"
+      >
+        Delete
+      </button>
+    </div>
+  }
 
   @if (tooltip(); as tip) {
     <div

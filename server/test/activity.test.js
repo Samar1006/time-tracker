@@ -292,6 +292,61 @@ describe('activity routes (API contract)', () => {
     assert.equal(patch.body.code, 'EVENT_NOT_EDITABLE');
   });
 
+  it('DELETE /api/events/:eventId rejects browser-tracked domain_visit events', async () => {
+    const ingest = await request('/api/events', {
+      method: 'POST',
+      headers: bearer(token),
+      body: {
+        timestamp: `${DATE}T14:00:00.000Z`,
+        type: 'domain_visit',
+        app: 'Chrome',
+        domain: 'github.com',
+        durationSec: 600,
+        metadata: { sourceClient: 'chrome-extension', localDate: DATE },
+      },
+    });
+    assert.equal(ingest.status, 201);
+    const eventId = ingest.body.ids[0];
+
+    const del = await request(`/api/events/${eventId}?date=${DATE}`, {
+      method: 'DELETE',
+      headers: bearer(token),
+    });
+    assert.equal(del.status, 403);
+    assert.equal(del.body.code, 'EVENT_NOT_EDITABLE');
+  });
+
+  it('DELETE /api/events/:eventId removes a voice event', async () => {
+    const ingest = await request('/api/events', {
+      method: 'POST',
+      headers: bearer(token),
+      body: {
+        timestamp: `${DATE}T10:00:00.000Z`,
+        type: 'voice',
+        app: 'Voice log',
+        title: 'Morning standup',
+        durationSec: 1800,
+        metadata: { localDate: DATE },
+      },
+    });
+    assert.equal(ingest.status, 201);
+    const eventId = ingest.body.ids[0];
+
+    const del = await request(`/api/events/${eventId}?date=${DATE}`, {
+      method: 'DELETE',
+      headers: bearer(token),
+    });
+    assert.equal(del.status, 200);
+    assert.equal(del.body.deleted, true);
+    assert.equal(del.body.eventId, eventId);
+
+    const timeline = await request(`/api/timeline?date=${DATE}&timezone=UTC`, {
+      headers: bearer(token),
+    });
+    const block = timeline.body.hours[10].blocks.find((b) => b.eventId === eventId);
+    assert.equal(block, undefined);
+  });
+
   it('DELETE /api/events clears a day', async () => {
     await request('/api/events/seed', {
       method: 'POST',

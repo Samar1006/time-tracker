@@ -30,6 +30,12 @@ interface TooltipState {
   y: number;
 }
 
+interface ContextMenuState {
+  x: number;
+  y: number;
+  positioned: PositionedBlock;
+}
+
 /** Vertical event block in Apple Calendar–style day column. */
 export interface PositionedBlock {
   block: TimelineBlock;
@@ -251,6 +257,7 @@ export class TimelineChartComponent {
   readonly selectDate = output<string>();
   readonly eventTimeChange = output<EventTimePatch>();
   readonly activityCreate = output<EventCreateDraft>();
+  readonly blockDelete = output<string>();
 
   readonly patchError = input<string | null>(null);
   readonly createBusy = input(false);
@@ -271,6 +278,7 @@ export class TimelineChartComponent {
 
   readonly zoomScale = signal(MIN_ZOOM);
   readonly tooltip = signal<TooltipState | null>(null);
+  readonly contextMenu = signal<ContextMenuState | null>(null);
   readonly activeDrag = signal<ActiveDrag | null>(null);
   readonly dragPreview = signal<DragPreview | null>(null);
   readonly activeCreateDrag = signal<ActiveCreateDrag | null>(null);
@@ -285,6 +293,12 @@ export class TimelineChartComponent {
   private readonly boundPointerUp = (event: PointerEvent) => this.onDragPointerUp(event);
   private readonly boundCreatePointerMove = (event: PointerEvent) => this.onCreatePointerMove(event);
   private readonly boundCreatePointerUp = (event: PointerEvent) => this.onCreatePointerUp(event);
+  private readonly boundCloseContextMenu = () => this.closeContextMenu();
+  private readonly boundContextMenuKeydown = (event: KeyboardEvent) => {
+    if (event.key === 'Escape') {
+      this.closeContextMenu();
+    }
+  };
   private dragCaptureEl: HTMLElement | null = null;
   private createCaptureEl: HTMLElement | null = null;
 
@@ -477,6 +491,48 @@ export class TimelineChartComponent {
 
   hideTooltip(): void {
     this.tooltip.set(null);
+  }
+
+  onBlockContextMenu(event: MouseEvent, positioned: PositionedBlock): void {
+    if (!this.blockIsEditable(positioned.block)) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    this.hideTooltip();
+    this.closeContextMenu();
+    this.contextMenu.set({
+      x: event.clientX,
+      y: event.clientY,
+      positioned
+    });
+
+    requestAnimationFrame(() => {
+      document.addEventListener('click', this.boundCloseContextMenu);
+      document.addEventListener('contextmenu', this.boundCloseContextMenu);
+      document.addEventListener('keydown', this.boundContextMenuKeydown);
+    });
+  }
+
+  closeContextMenu(): void {
+    if (!this.contextMenu()) {
+      return;
+    }
+    this.contextMenu.set(null);
+    document.removeEventListener('click', this.boundCloseContextMenu);
+    document.removeEventListener('contextmenu', this.boundCloseContextMenu);
+    document.removeEventListener('keydown', this.boundContextMenuKeydown);
+  }
+
+  confirmDeleteBlock(event: MouseEvent): void {
+    event.stopPropagation();
+    const menu = this.contextMenu();
+    const eventId = menu?.positioned.block.eventId;
+    this.closeContextMenu();
+    if (eventId) {
+      this.blockDelete.emit(eventId);
+    }
   }
 
   blockTrackKey(positioned: PositionedBlock): string {
@@ -783,6 +839,7 @@ export class TimelineChartComponent {
   }
 
   onWheelZoom(event: WheelEvent): void {
+    this.closeContextMenu();
     // macOS trackpad pinch sends wheel events with ctrlKey; plain two-finger scroll scrolls.
     if (!event.ctrlKey) {
       return;
