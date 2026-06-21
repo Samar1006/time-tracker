@@ -16,128 +16,6 @@
   gap: 1.5rem;
 }
 
-.dashboard-monitor {
-  padding: 1rem 1.25rem;
-  background: #fffbeb;
-  border: 1px solid #fde68a;
-  border-radius: var(--radius-lg);
-  display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
-
-  &--live {
-    background: #ecfdf5;
-    border-color: #a7f3d0;
-  }
-
-  &--demo {
-    background: #fef2f2;
-    border-color: #fecaca;
-  }
-}
-
-.dashboard-monitor__header {
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-}
-
-.dashboard-monitor__badge {
-  font-size: 0.8125rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: #92400e;
-}
-
-.dashboard-monitor--live .dashboard-monitor__badge {
-  color: #047857;
-}
-
-.dashboard-monitor--demo .dashboard-monitor__badge {
-  color: #b91c1c;
-}
-
-.dashboard-monitor__text {
-  margin: 0;
-  font-size: 0.9375rem;
-  color: #374151;
-}
-
-.dashboard-monitor__user {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.75rem;
-}
-
-.dashboard-monitor__user-id {
-  padding: 0.375rem 0.625rem;
-  background: rgba(255, 255, 255, 0.8);
-  border: 1px solid rgba(0, 0, 0, 0.08);
-  border-radius: 6px;
-  font-size: 0.8125rem;
-}
-
-.dashboard-monitor__copy {
-  padding: 0.375rem 0.75rem;
-  font-size: 0.8125rem;
-  font-weight: 600;
-  color: var(--color-primary);
-  background: transparent;
-  border: 1px solid var(--color-primary);
-  border-radius: 6px;
-  cursor: pointer;
-}
-
-.dashboard-monitor__steps {
-  margin: 0;
-  padding-left: 1.25rem;
-  font-size: 0.875rem;
-  color: #4b5563;
-
-  li + li {
-    margin-top: 0.25rem;
-  }
-
-  code {
-    font-size: 0.8125rem;
-  }
-}
-
-.dashboard-monitor__status-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-  gap: 0.75rem;
-}
-
-.dashboard-monitor__status-item {
-  display: flex;
-  flex-direction: column;
-  gap: 0.125rem;
-  padding: 0.625rem 0.75rem;
-  background: rgba(255, 255, 255, 0.7);
-  border-radius: 8px;
-}
-
-.dashboard-monitor__status-label {
-  font-size: 0.75rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: #6b7280;
-}
-
-.dashboard-monitor__status-value {
-  font-size: 0.875rem;
-  color: #374151;
-
-  &--ok {
-    color: #047857;
-    font-weight: 600;
-  }
-}
-
 .dashboard-stats {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -152,13 +30,13 @@
 }
 
 .dashboard-timeline-wrap {
-  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
 }
 
 .dashboard-voice-btn {
-  position: absolute;
-  right: 1.5rem;
-  bottom: 1.5rem;
+  align-self: flex-end;
   display: inline-flex;
   align-items: center;
   gap: 0.5rem;
@@ -207,8 +85,6 @@
   }
 
   .dashboard-voice-btn {
-    position: static;
     align-self: flex-end;
-    margin-top: 1rem;
   }
 }

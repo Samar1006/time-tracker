@@ -4,7 +4,6 @@ import {
   combineLatest,
   exhaustMap,
   finalize,
-  forkJoin,
   interval,
   map,
   of,
@@ -15,9 +14,6 @@ import {
 import { toObservable, toSignal } from '@angular/core/rxjs-interop';
 
 import { AuthService } from '../../../../core/services/auth.service';
-import { MonitorService } from '../../../../core/services/monitor.service';
-import { TimelineResponse } from '../../../../core/models/timeline.model';
-import { ExtensionStatus, MonitorStatusResponse } from '../../../../core/models/monitor.model';
 import { TimelineService } from '../../../../core/services/timeline.service';
 import { ActivityCalendarComponent } from '../../components/activity-calendar/activity-calendar.component';
 import { DashboardHeaderComponent } from '../../components/dashboard-header/dashboard-header.component';
@@ -33,23 +29,15 @@ import {
 } from '../../utils/calendar.util';
 import {
   computeDashboardStats,
-  computeVisibleHourRange,
   formatDisplayDate,
   getVisibleHours,
-  hasDemoData,
-  hasLiveTrackedData,
   shiftDate,
   toDateInputValue
 } from '../../utils/dashboard-stats.util';
 
 const API_TIMEOUT_MS = 8_000;
+const SUMMARY_TIMEOUT_MS = 15_000;
 const REFRESH_MS = 60_000;
-
-interface DashboardData {
-  timeline: TimelineResponse | null;
-  monthTotals: Map<string, number>;
-  monitor: MonitorStatusResponse | null;
-}
 
 @Component({
   selector: 'app-dashboard',
@@ -66,7 +54,6 @@ interface DashboardData {
 export class DashboardComponent {
   readonly auth = inject(AuthService);
   private readonly timelineService = inject(TimelineService);
-  private readonly monitorService = inject(MonitorService);
 
   constructor() {
     effect(() => {
@@ -81,92 +68,82 @@ export class DashboardComponent {
   readonly visibleMonth = signal(monthKeyFromDate(toDateInputValue(new Date())));
   readonly loading = signal(true);
   readonly error = signal<string | null>(null);
-  readonly copyStatus = signal<string | null>(null);
+  readonly monthTotals = signal(new Map<string, number>());
 
   private readonly dashboardState = toSignal(
     combineLatest([
       toObservable(this.selectedDate),
-      toObservable(this.visibleMonth),
       toObservable(this.auth.user)
     ]).pipe(
-      switchMap(([date, month, user]) =>
+      switchMap(([date, user]) =>
         interval(REFRESH_MS).pipe(
           startWith(0),
-          map(() => ({ date, month, userId: user?.userId ?? null }))
+          map(() => ({ date, userId: user?.userId ?? null }))
         )
       ),
-      exhaustMap(({ date, month, userId }) => {
+      exhaustMap(({ date, userId }) => {
         this.loading.set(true);
         this.error.set(null);
 
         if (!userId) {
           this.loading.set(false);
-          return of({
-            timeline: null,
-            monthTotals: new Map<string, number>(),
-            monitor: null
-          } satisfies DashboardData);
+          return of({ timeline: null });
         }
 
-        return forkJoin({
-          timeline: this.timelineService.getTimeline(userId, date).pipe(
-            timeout(API_TIMEOUT_MS),
-            catchError(() => of(null))
-          ),
-          summary: this.timelineService.getMonthSummary(userId, month).pipe(
-            timeout(API_TIMEOUT_MS),
-            catchError(() => of(null))
-          ),
-          monitor: this.monitorService.getStatus(userId, date).pipe(
-            timeout(API_TIMEOUT_MS),
-            catchError(() => of(null))
-          )
-        }).pipe(
-          map(({ timeline, summary, monitor }) => {
+        return this.timelineService.getTimeline(userId, date).pipe(
+          timeout(API_TIMEOUT_MS),
+          catchError(() => of(null)),
+          map((timeline) => {
             if (!timeline) {
               this.error.set(
                 'Unable to load timeline. Make sure the server is running on port 4000.'
               );
             }
-            return {
-              timeline,
-              monthTotals: summary
-                ? new Map(summary.days.map((day) => [day.date, day.totalTrackedSec]))
-                : new Map<string, number>(),
-              monitor
-            } satisfies DashboardData;
+            return { timeline };
           }),
           finalize(() => this.loading.set(false))
         );
       })
     ),
     {
-      initialValue: {
-        timeline: null,
-        monthTotals: new Map<string, number>(),
-        monitor: null
-      } satisfies DashboardData
+      initialValue: { timeline: null }
     }
   );
 
-  private readonly extensionState = toSignal(
-    interval(30_000).pipe(
-      startWith(0),
-      exhaustMap(() => this.monitorService.watchExtensionStatus())
+  /** Keeps month summary fetch alive; totals written to monthTotals signal. */
+  private readonly _monthSummarySubscription = toSignal(
+    combineLatest([
+      toObservable(this.visibleMonth),
+      toObservable(this.auth.user)
+    ]).pipe(
+      switchMap(([month, user]) =>
+        interval(REFRESH_MS).pipe(
+          startWith(0),
+          map(() => ({ month, userId: user?.userId ?? null }))
+        )
+      ),
+      exhaustMap(({ month, userId }) => {
+        if (!userId) {
+          this.monthTotals.set(new Map());
+          return of(new Map<string, number>());
+        }
+
+        return this.timelineService.getMonthSummary(userId, month).pipe(
+          timeout(SUMMARY_TIMEOUT_MS),
+          map((summary) => new Map(summary.days.map((day) => [day.date, day.totalTrackedSec]))),
+          catchError(() => of(new Map<string, number>())),
+          map((totals) => {
+            this.monthTotals.set(totals);
+            return totals;
+          })
+        );
+      })
     ),
-    { initialValue: { connected: false } as ExtensionStatus }
+    { initialValue: new Map<string, number>() }
   );
 
   readonly timeline = computed(() => this.dashboardState().timeline);
-  readonly monthTotals = computed(() => this.dashboardState().monthTotals);
-  readonly monitorStatus = computed(() => this.dashboardState().monitor);
   readonly userId = computed(() => this.auth.user()?.userId ?? null);
-  readonly hasLiveData = computed(() => hasLiveTrackedData(this.timeline()));
-  readonly showingDemoData = computed(() => hasDemoData(this.timeline()));
-  readonly extensionStatus = computed(() => this.extensionState());
-  readonly lastSyncLabel = computed(() =>
-    this.monitorService.formatLastSync(this.monitorStatus()?.lastEventAt ?? null)
-  );
   readonly calendarCells = computed(() =>
     buildCalendarGrid(this.visibleMonth(), this.selectedDate(), this.monthTotals())
   );
@@ -186,18 +163,9 @@ export class DashboardComponent {
     return computeDashboardStats(current);
   });
 
-  readonly visibleHours = computed(() => {
+  readonly dayHours = computed(() => {
     const current = this.timeline();
-    const { startHour, endHour } = computeVisibleHourRange(
-      current?.hours ?? [],
-      this.selectedDate()
-    );
-
-    if (!current) {
-      return getVisibleHours([], startHour, endHour);
-    }
-
-    return getVisibleHours(current.hours, startHour, endHour);
+    return getVisibleHours(current?.hours ?? [], 0, 23);
   });
 
   readonly displayDate = computed(() => formatDisplayDate(this.selectedDate()));
@@ -230,18 +198,5 @@ export class DashboardComponent {
 
   onVoiceLog(): void {
     console.log('Voice log clicked');
-  }
-
-  async copyUserId(): Promise<void> {
-    const id = this.userId();
-    if (!id) return;
-
-    try {
-      await navigator.clipboard.writeText(id);
-      this.copyStatus.set('Copied');
-      setTimeout(() => this.copyStatus.set(null), 2000);
-    } catch {
-      this.copyStatus.set('Copy failed');
-    }
   }
 }

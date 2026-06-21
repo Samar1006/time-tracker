@@ -9,6 +9,7 @@ import {
   clearEvents,
   countEvents,
   loadEvents,
+  loadMonthDayTotals,
 } from '../services/activityStore.js';
 import {
   aggregateTimeline,
@@ -185,22 +186,7 @@ router.get('/timeline/summary', requireAuth, async (req, res, next) => {
     }
 
     const timezone = req.query.timezone || 'UTC';
-    const [year, monthNum] = month.split('-').map(Number);
-    const daysInMonth = new Date(Date.UTC(year, monthNum, 0)).getUTCDate();
-
-    const dayResults = await Promise.all(
-      Array.from({ length: daysInMonth }, (_, index) => {
-        const day = index + 1;
-        const date = `${month}-${String(day).padStart(2, '0')}`;
-        return loadEvents(userId, date).then((events) => ({
-          date,
-          totalTrackedSec:
-            events.length === 0
-              ? 0
-              : aggregateTimeline(events, date, { userId, timezone }).totalTrackedSec,
-        }));
-      }),
-    );
+    const dayResults = await loadMonthDayTotals(userId, month);
 
     res.json({ userId, month, timezone, days: dayResults });
   } catch (err) {

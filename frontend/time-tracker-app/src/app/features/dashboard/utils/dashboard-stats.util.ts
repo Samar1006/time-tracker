@@ -1,4 +1,5 @@
 import { ActivityCategory, TimelineHour, TimelineResponse } from '../../../core/models/timeline.model';
+import { CATEGORY_LABELS } from '../../../core/constants/categories';
 import { formatDuration } from '../../../core/utils/duration.util';
 
 export function hasLiveTrackedData(timeline: TimelineResponse | null): boolean {
@@ -57,7 +58,7 @@ export function computeDashboardStats(timeline: TimelineResponse): DashboardStat
     }
   }
 
-  const categoryLabel = topCategory.charAt(0).toUpperCase() + topCategory.slice(1);
+  const categoryLabel = CATEGORY_LABELS[topCategory] ?? topCategory;
 
   return {
     totalTracked: formatDuration(timeline.totalTrackedSec),

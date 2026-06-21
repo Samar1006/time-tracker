@@ -15,7 +15,7 @@ export const CATEGORY_LABELS: Record<ActivityCategory, string> = {
   learning: 'Learning',
   entertainment: 'Entertainment',
   break: 'Break',
-  uncategorized: 'Uncategorized'
+  uncategorized: 'Miscellaneous'
 };
 
 export const CATEGORY_LEGEND: ActivityCategory[] = [
@@ -23,5 +23,6 @@ export const CATEGORY_LEGEND: ActivityCategory[] = [
   'communication',
   'learning',
   'entertainment',
-  'break'
+  'break',
+  'uncategorized'
 ];

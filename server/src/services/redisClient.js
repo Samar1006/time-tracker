@@ -126,7 +126,19 @@ async function runRedisOp(label, op, fallback) {
     if (!client) return fallback();
     return await withTimeout(op(client), OP_TIMEOUT_MS, label);
   } catch (err) {
-    disableRedis(err);
+    const msg = String(err?.message ?? err);
+    const isConnectFailure = msg.includes('connect') || msg.includes('ECONNREFUSED');
+    disableRedis(err, _client, { permanent: isConnectFailure });
+
+    // Transient op timeout — reconnect once instead of staying on empty memory forever.
+    if (!isConnectFailure && process.env.REDIS_URL && !_connectFailed) {
+      try {
+        const client = await getRedisClient();
+        if (client) return await withTimeout(op(client), OP_TIMEOUT_MS, label);
+      } catch (retryErr) {
+        disableRedis(retryErr, _client, { permanent: false });
+      }
+    }
     return fallback();
   }
 }
@@ -171,6 +183,32 @@ export async function deleteKey(key) {
   );
 }
 
+/** Batch LRANGE in one round trip (month summary). */
+export async function listRangeMany(keys) {
+  if (keys.length === 0) return new Map();
+
+  return runRedisOp(
+    'listRangeMany',
+    async (client) => {
+      const multi = client.multi();
+      for (const key of keys) multi.lRange(key, 0, -1);
+      const replies = await multi.exec();
+      const map = new Map();
+      keys.forEach((key, index) => {
+        map.set(key, replies?.[index] ?? []);
+      });
+      return map;
+    },
+    () => {
+      const map = new Map();
+      for (const key of keys) {
+        map.set(key, [...memoryKey(key)]);
+      }
+      return map;
+    },
+  );
+}
+
 /** Test helper — clears in-memory fallback between tests. */
 export function resetMemoryStore() {
   memoryLists.clear();
@@ -188,6 +226,7 @@ export default {
   warmUpRedis,
   listPush,
   listRange,
+  listRangeMany,
   listLength,
   deleteKey,
   resetMemoryStore,

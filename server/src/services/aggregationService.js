@@ -28,6 +28,11 @@ function inferDurationSec(event) {
   return 300;
 }
 
+/** Fast total for calendar dots — skips hour bucketing. */
+export function sumTrackedSec(events) {
+  return events.reduce((total, event) => total + eventInterval(event).durationSec, 0);
+}
+
 export function mapSource(type) {
   if (type === 'manual') return 'manual';
   if (type === 'voice') return 'voice';
@@ -65,23 +70,42 @@ export function localHour(ms, timeZone) {
 }
 
 function localDayRangeMs(date, timeZone) {
-  const anchor = Date.parse(`${date}T12:00:00.000Z`);
-  let start = anchor;
+  const utcMid = Date.parse(`${date}T00:00:00.000Z`);
+  const windowStart = utcMid - 14 * 3600 * MS_PER_SEC;
+  const windowEnd = utcMid + 38 * 3600 * MS_PER_SEC;
 
-  while (localDateString(start - MS_PER_SEC, timeZone) === date) {
-    start -= MS_PER_SEC;
+  // Binary search — O(log n) instead of ~100k second-by-second Intl calls.
+  let lo = windowStart;
+  let hi = windowEnd;
+  while (lo < hi) {
+    const mid = Math.floor((lo + hi) / 2);
+    if (localDateString(mid, timeZone) < date) lo = mid + 1;
+    else hi = mid;
   }
-  while (localDateString(start, timeZone) !== date) {
-    start += MS_PER_SEC;
-  }
+  const start = lo;
 
-  let end = start;
-  while (localDateString(end + MS_PER_SEC, timeZone) === date) {
-    end += MS_PER_SEC;
+  lo = start;
+  hi = start + 28 * 3600 * MS_PER_SEC;
+  while (lo < hi) {
+    const mid = Math.floor((lo + hi) / 2);
+    if (localDateString(mid, timeZone) === date) lo = mid + 1;
+    else hi = mid;
   }
-  end += MS_PER_SEC;
+  const end = lo;
 
   return { start, end };
+}
+
+function nextHourBoundaryMs(cursor, clampedEnd, timeZone, hour) {
+  let lo = cursor + 1;
+  let hi = clampedEnd;
+  if (lo >= hi) return clampedEnd;
+  while (lo < hi) {
+    const mid = Math.floor((lo + hi) / 2);
+    if (localHour(mid, timeZone) === hour) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
 }
 
 function splitEventAcrossHoursLocal(event, date, timeZone) {
@@ -100,16 +124,7 @@ function splitEventAcrossHoursLocal(event, date, timeZone) {
 
   while (cursor < clampedEnd) {
     const hour = localHour(cursor, timeZone);
-    let sliceEnd = Math.min(clampedEnd, cursor + MS_PER_SEC);
-
-    for (let probe = cursor + MS_PER_SEC; probe < clampedEnd; probe += MS_PER_SEC) {
-      if (localHour(probe, timeZone) !== hour) {
-        sliceEnd = probe;
-        break;
-      }
-      sliceEnd = probe + MS_PER_SEC;
-    }
-
+    const sliceEnd = nextHourBoundaryMs(cursor, clampedEnd, timeZone, hour);
     const durationSec = (sliceEnd - cursor) / MS_PER_SEC;
     if (durationSec > 0) {
       slices.push({

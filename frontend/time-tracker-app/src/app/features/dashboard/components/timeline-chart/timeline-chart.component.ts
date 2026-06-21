@@ -5,15 +5,36 @@ import {
   CATEGORY_LABELS,
   CATEGORY_LEGEND
 } from '../../../../core/constants/categories';
-import { TimelineBlock, TimelineHour } from '../../../../core/models/timeline.model';
+import { ActivityCategory, TimelineBlock, TimelineHour } from '../../../../core/models/timeline.model';
 import { formatDuration, formatHourLabel } from '../../../../core/utils/duration.util';
 
 interface TooltipState {
-  activity: string;
+  category: string;
   duration: string;
+  activity: string;
+  timeRange: string;
   x: number;
   y: number;
 }
+
+export interface HourSegment {
+  category: ActivityCategory;
+  durationSec: number;
+  /** Share of the 60-minute hour (0–100). */
+  widthPct: number;
+  sampleBlock: TimelineBlock;
+}
+
+export interface HourRow {
+  hour: number;
+  label: string;
+  totalTrackedSec: number;
+  segments: HourSegment[];
+  /** Untracked portion of the hour (0–100). */
+  unusedPct: number;
+}
+
+const SECONDS_PER_HOUR = 3600;
 
 @Component({
   selector: 'app-timeline-chart',
@@ -22,42 +43,89 @@ interface TooltipState {
 })
 export class TimelineChartComponent {
   readonly hours = input.required<TimelineHour[]>();
-  readonly startHour = input(8);
-  readonly endHour = input(18);
+  readonly date = input.required<string>();
 
   readonly tooltip = signal<TooltipState | null>(null);
   readonly categoryLegend = CATEGORY_LEGEND;
   readonly categoryLabels = CATEGORY_LABELS;
 
-  readonly maxTrackedSec = computed(() => {
-    const peak = Math.max(...this.hours().map((hour) => hour.totalTrackedSec), 0);
-    return peak > 0 ? peak : 3600;
-  });
+  readonly hourRows = computed(() => {
+    const byHour = new Map(this.hours().map((hour) => [hour.hour, hour]));
+    const rows: HourRow[] = [];
 
-  hourLabel(hour: number): string {
-    return formatHourLabel(hour);
-  }
+    for (let hour = 0; hour <= 23; hour += 1) {
+      const bucket = byHour.get(hour) ?? {
+        hour,
+        label: `${String(hour).padStart(2, '0')}:00`,
+        totalTrackedSec: 0,
+        blocks: []
+      };
 
-  segmentHeight(durationSec: number, totalTrackedSec: number): string {
-    if (totalTrackedSec <= 0) {
-      return '0%';
+      const categoryTotals = new Map<ActivityCategory, { durationSec: number; block: TimelineBlock }>();
+      for (const block of bucket.blocks) {
+        const existing = categoryTotals.get(block.category);
+        if (existing) {
+          existing.durationSec += block.durationSec;
+        } else {
+          categoryTotals.set(block.category, { durationSec: block.durationSec, block });
+        }
+      }
+
+      const segments: HourSegment[] = [...categoryTotals.entries()]
+        .map(([category, { durationSec, block }]) => ({
+          category,
+          durationSec,
+          widthPct: (durationSec / SECONDS_PER_HOUR) * 100,
+          sampleBlock: block
+        }))
+        .sort((a, b) => b.durationSec - a.durationSec);
+
+      const trackedPct = Math.min(
+        100,
+        segments.reduce((sum, segment) => sum + segment.widthPct, 0)
+      );
+
+      rows.push({
+        hour,
+        label: formatHourLabel(hour),
+        totalTrackedSec: bucket.totalTrackedSec,
+        segments,
+        unusedPct: Math.max(0, 100 - trackedPct)
+      });
     }
 
-    const ratio = durationSec / this.maxTrackedSec();
-    return `${Math.max(ratio * 100, 4)}%`;
+    return rows;
+  });
+
+  readonly hasActivity = computed(() =>
+    this.hours().some((hour) => hour.totalTrackedSec > 0)
+  );
+
+  formatBlockDuration(seconds: number): string {
+    return formatDuration(seconds);
   }
 
-  categoryColor(category: TimelineBlock['category']): string {
+  formatTimeRange(block: TimelineBlock): string {
+    const fmt = new Intl.DateTimeFormat(undefined, {
+      hour: 'numeric',
+      minute: '2-digit'
+    });
+    return `${fmt.format(new Date(block.start))} – ${fmt.format(new Date(block.end))}`;
+  }
+
+  categoryColor(category: ActivityCategory): string {
     return CATEGORY_COLORS[category];
   }
 
-  showTooltip(block: TimelineBlock, event: MouseEvent): void {
+  showSegmentTooltip(segment: HourSegment, event: MouseEvent): void {
     const target = event.currentTarget as HTMLElement;
     const rect = target.getBoundingClientRect();
 
     this.tooltip.set({
-      activity: block.activity,
-      duration: formatDuration(block.durationSec),
+      category: CATEGORY_LABELS[segment.category],
+      duration: formatDuration(segment.durationSec),
+      activity: segment.sampleBlock.activity,
+      timeRange: this.formatTimeRange(segment.sampleBlock),
       x: rect.left + rect.width / 2,
       y: rect.top - 8
     });
@@ -65,5 +133,9 @@ export class TimelineChartComponent {
 
   hideTooltip(): void {
     this.tooltip.set(null);
+  }
+
+  unusedLabel(unusedPct: number): string {
+    return formatDuration(Math.round((unusedPct / 100) * SECONDS_PER_HOUR));
   }
 }
