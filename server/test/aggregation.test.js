@@ -79,4 +79,30 @@ describe('aggregationService', () => {
     assert.equal(hour11.blocks.length, 1);
     assert.equal(hour11.blocks[0].durationSec, 2100);
   });
+
+  it('includes full event span metadata on overnight blocks', () => {
+    const events = [{
+      id: 'sleep',
+      userId: USER,
+      timestamp: `${DATE}T23:00:00.000Z`,
+      type: 'voice',
+      title: 'sleeping',
+      durationSec: 7 * 3600,
+      metadata: { localDate: DATE, endLocalDate: '2026-06-21' },
+    }];
+
+    const startDay = aggregateTimeline(events, DATE, { userId: USER, timezone: 'UTC' });
+    const nightBlock = startDay.hours[23].blocks.find((b) => b.activity === 'sleeping');
+    assert.ok(nightBlock);
+    assert.equal(nightBlock.spansNextDay, true);
+    assert.equal(nightBlock.spansFromPrevDay, false);
+    assert.equal(nightBlock.eventEnd, '2026-06-21T06:00:00.000Z');
+
+    const nextDay = aggregateTimeline(events, '2026-06-21', { userId: USER, timezone: 'UTC' });
+    const morningBlock = nextDay.hours[5].blocks.find((b) => b.activity === 'sleeping');
+    assert.ok(morningBlock);
+    assert.equal(morningBlock.spansFromPrevDay, true);
+    assert.equal(morningBlock.spansNextDay, false);
+    assert.equal(morningBlock.eventStart, `${DATE}T23:00:00.000Z`);
+  });
 });

@@ -3,26 +3,7 @@ import { HttpClient } from '@angular/common/http';
 import { firstValueFrom } from 'rxjs';
 
 import { environment } from '../../../environments/environment';
-
-/** A parsed schedule block as returned by POST /api/schedule/parse. */
-interface ScheduleBlock {
-  date?: string | null;
-  endDate?: string | null;
-  start?: string | null;
-  end?: string | null;
-  durationMin?: number | null;
-  activity?: string;
-  category?: string;
-}
-
-/** A raw activity event as accepted by POST /api/events. */
-interface RawEvent {
-  timestamp: string;
-  type: string;
-  title: string;
-  durationSec: number;
-  metadata?: Record<string, unknown>;
-}
+import { scheduleBlocksToEvents, type ScheduleBlock } from '../utils/voice-block.util';
 
 export interface VoiceLogResult {
   transcript: string;
@@ -105,9 +86,7 @@ export class VoiceLogService {
           );
 
           const blocks = parsed.blocks ?? [];
-          const events = blocks
-            .map((b) => blockToEvent(b, selectedDate))
-            .filter((e): e is RawEvent => e !== null);
+          const events = scheduleBlocksToEvents(blocks, selectedDate);
 
           if (events.length) {
             await firstValueFrom(
@@ -134,49 +113,4 @@ async function blobToBase64(blob: Blob): Promise<string> {
     reader.onerror = reject;
     reader.readAsDataURL(blob);
   });
-}
-
-/** "9:00 AM" -> minutes since midnight. Returns null if unparseable. */
-function parseClock(label: string | null | undefined): number | null {
-  if (!label) return null;
-  const m = label.trim().match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
-  if (!m) return null;
-  let h = parseInt(m[1], 10);
-  const min = parseInt(m[2], 10);
-  const period = m[3].toUpperCase();
-  if (period === 'PM' && h < 12) h += 12;
-  if (period === 'AM' && h === 12) h = 0;
-  return h * 60 + min;
-}
-
-function blockToEvent(block: ScheduleBlock, fallbackDate: string): RawEvent | null {
-  const startMin = parseClock(block.start);
-  if (startMin == null) return null;
-
-  const date = block.date || fallbackDate;
-  const endMin = parseClock(block.end);
-  let durationSec: number;
-  if (block.durationMin != null && block.durationMin > 0) {
-    durationSec = Math.max(60, Math.round(block.durationMin * 60));
-  } else if (endMin != null) {
-    let span = endMin - startMin;
-    if (span <= 0 && block.endDate && block.endDate !== date) {
-      span = endMin + 24 * 60 - startMin;
-    }
-    durationSec = Math.max(60, span * 60);
-  } else {
-    durationSec = 30 * 60;
-  }
-
-  const hh = String(Math.floor(startMin / 60)).padStart(2, '0');
-  const mm = String(startMin % 60).padStart(2, '0');
-  const timestamp = `${date}T${hh}:${mm}:00.000Z`;
-
-  return {
-    timestamp,
-    type: 'voice',
-    title: block.activity?.trim() || 'Activity',
-    durationSec,
-    metadata: { category: block.category, sourceClient: 'dashboard-voice' },
-  };
 }

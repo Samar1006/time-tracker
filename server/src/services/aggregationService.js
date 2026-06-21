@@ -14,6 +14,12 @@ export function todayUtcDate() {
   return new Date().toISOString().slice(0, 10);
 }
 
+export function addDaysISO(date, days) {
+  const base = new Date(`${date}T12:00:00.000Z`);
+  base.setUTCDate(base.getUTCDate() + days);
+  return base.toISOString().slice(0, 10);
+}
+
 export function eventInterval(event) {
   const startMs = Date.parse(event.timestamp);
   const durationSec = Number(event.durationSec) > 0
@@ -94,6 +100,16 @@ function localDayRangeMs(date, timeZone) {
   const end = lo;
 
   return { start, end };
+}
+
+/** True when a stored event interval overlaps a local calendar day. */
+export function eventOverlapsLocalDate(event, date, timeZone = 'UTC') {
+  const { startMs, endMs } = eventInterval(event);
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) {
+    return false;
+  }
+  const { start, end } = localDayRangeMs(date, timeZone);
+  return startMs < end && endMs > start;
 }
 
 function nextHourBoundaryMs(cursor, clampedEnd, timeZone, hour) {
@@ -241,6 +257,10 @@ export function aggregateTimeline(events, date, { userId, timezone = 'UTC' } = {
     const roundedSec = Math.round(slice.durationSec);
     if (roundedSec <= 0) continue;
 
+    const { startMs: eventStartMs, endMs: eventEndMs } = eventInterval(slice.event);
+    const spansNextDay = localDateString(eventEndMs, timezone) > date;
+    const spansFromPrevDay = localDateString(eventStartMs, timezone) < date;
+
     // Use the shared AI categorizer: by domain when present, else by label text.
     const { category, confidence } = slice.event.domain
       ? categorizeDomain(slice.event.domain)
@@ -250,6 +270,10 @@ export function aggregateTimeline(events, date, { userId, timezone = 'UTC' } = {
     hourBucket.blocks.push({
       start: new Date(slice.startMs).toISOString(),
       end: new Date(slice.endMs).toISOString(),
+      eventStart: new Date(eventStartMs).toISOString(),
+      eventEnd: new Date(eventEndMs).toISOString(),
+      spansNextDay,
+      spansFromPrevDay,
       activity: activityLabel(slice.event),
       category,
       source: mapSource(slice.event.type),

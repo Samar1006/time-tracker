@@ -15,6 +15,8 @@ import {
   aggregateTimeline,
   parseDateOnly,
   todayUtcDate,
+  eventOverlapsLocalDate,
+  addDaysISO,
 } from '../services/aggregationService.js';
 import { getStorageMode } from '../services/redisClient.js';
 import { sampleActivityEvents } from '../data/sampleActivityEvents.js';
@@ -95,6 +97,17 @@ function eventStorageDate(event) {
   const localDate = parseDateOnly(event.metadata?.localDate);
   if (localDate) return localDate;
   return parseDateOnly(event.timestamp);
+}
+
+/** Events stored on the previous day that spill into `date` (overnight spans). */
+async function loadTimelineEvents(userId, date, timezone) {
+  const events = await loadEvents(userId, date);
+  const prevDate = addDaysISO(date, -1);
+  const prevDay = await loadEvents(userId, prevDate);
+  const carryover = prevDay.filter((e) => eventOverlapsLocalDate(e, date, timezone));
+  const byId = new Map();
+  for (const e of [...carryover, ...events]) byId.set(e.id, e);
+  return [...byId.values()];
 }
 
 router.get('/timeline/health', (_req, res) => {
@@ -201,7 +214,7 @@ router.get('/timeline', requireAuth, async (req, res, next) => {
     const userId = req.user.id;
     const date = parseDateOnly(req.query.date) ?? todayUtcDate();
     const timezone = req.query.timezone || 'UTC';
-    const events = await loadEvents(userId, date);
+    const events = await loadTimelineEvents(userId, date, timezone);
 
     if (events.length === 0) {
       if (req.query.demo === 'true') {

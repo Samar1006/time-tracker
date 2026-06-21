@@ -2,7 +2,6 @@ import { Component, computed, inject, signal } from '@angular/core';
 import {
   catchError,
   combineLatest,
-  exhaustMap,
   finalize,
   interval,
   map,
@@ -65,7 +64,7 @@ export class DashboardComponent {
           map(() => ({ date, userId: user?.userId ?? null }))
         )
       ),
-      exhaustMap(({ date, userId }) => {
+      switchMap(({ date, userId }) => {
         this.loading.set(true);
         this.error.set(null);
 
