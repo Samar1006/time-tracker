@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseTranscript, toDateISO } from '../src/routes/schedule.js';
+import { parseTranscript, toDateISO, normalizeCategoryContext } from '../src/routes/schedule.js';
 import { sampleTranscripts } from '../src/data/sampleTranscripts.js';
 
 const REF = new Date('2026-06-20T12:00:00.000Z');
@@ -146,6 +146,16 @@ test('activity labels use present tense', () => {
   assert.equal(parse('From 9 to 10 I worked on the dashboard.').blocks[0].activity, 'working on the dashboard');
   assert.equal(parse('I will run today from 3 am to 6 am.').blocks[0].activity, 'running');
   assert.equal(parse('Yesterday at 5 am to 6 am I worked out.').blocks[0].activity, 'working out');
+});
+
+test('normalizeCategoryContext accepts optional LLM hint array', () => {
+  assert.deepEqual(normalizeCategoryContext(null), []);
+  assert.deepEqual(
+    normalizeCategoryContext([{ label: 'productive', description: 'coding, studying' }]),
+    [{ label: 'productive', description: 'coding, studying' }],
+  );
+  assert.equal(normalizeCategoryContext('bad'), null);
+  assert.equal(normalizeCategoryContext([{ label: '', description: 'x' }]), null);
 });
 
 test('empty transcript returns no blocks', () => {

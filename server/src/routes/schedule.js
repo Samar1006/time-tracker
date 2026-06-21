@@ -491,7 +491,7 @@ function getAnthropic() {
 }
 
 const CATEGORY_GUIDE = `
-Categories (pick exactly one per block):
+Categories (pick exactly one per block — output MUST use these exact values):
 - work: coding, debugging, building features, PR reviews, design docs, project tasks
 - communication: email, Slack, calls, standups, syncs, 1:1s, team meetings
 - learning: reading docs, courses, tutorials, research, studying
@@ -507,6 +507,35 @@ Examples:
 - "browsed youtube" -> entertainment
 - "coffee break" -> break
 `.trim();
+
+export function normalizeCategoryContext(input) {
+  if (input == null) return [];
+  if (!Array.isArray(input)) return null;
+  if (input.length > 12) return null;
+
+  const out = [];
+  for (const item of input) {
+    if (!item || typeof item !== 'object') return null;
+    const label = typeof item.label === 'string' ? item.label.trim() : '';
+    const description = typeof item.description === 'string' ? item.description.trim() : '';
+    if (!label || !description || label.length > 64 || description.length > 256) return null;
+    out.push({ label, description });
+  }
+  return out;
+}
+
+function buildCategoryContextPrompt(categoryContext) {
+  if (!categoryContext?.length) return '';
+  const lines = categoryContext.map(
+    (c) => `- "${c.label}": ${c.description}`,
+  );
+  return (
+    '\n\nThe user describes activities in their own terms. Use these groupings to choose ' +
+    'the best matching standard category (work, communication, learning, entertainment, ' +
+    'break, or uncategorized) for each block:\n' +
+    lines.join('\n')
+  );
+}
 
 const BLOCKS_SCHEMA = {
   type: 'object',
@@ -542,7 +571,7 @@ function llmBlockConfidence(block) {
   return Math.min(0.95, score);
 }
 
-export async function refineWithLLM(transcript, fallback) {
+export async function refineWithLLM(transcript, fallback, { categoryContext = [] } = {}) {
   const client = getAnthropic();
   if (!client) return fallback;
   try {
@@ -561,7 +590,8 @@ export async function refineWithLLM(transcript, fallback) {
         'Infer missing start times from the previous activity end when reasonable. ' +
         'Activity labels must use present tense / -ing form (e.g. "walking", "working out", "studying", "answering emails"). ' +
         'Do not use past tense or future tense in activity labels.\n\n' +
-        CATEGORY_GUIDE,
+        CATEGORY_GUIDE +
+        buildCategoryContextPrompt(categoryContext),
       messages: [{ role: 'user', content: transcript }],
       output_config: { format: { type: 'json_schema', schema: BLOCKS_SCHEMA } },
     });
@@ -595,7 +625,12 @@ export async function refineWithLLM(transcript, fallback) {
 }
 
 router.post('/parse', async (req, res) => {
-  const { transcript, useLLM = !!process.env.ANTHROPIC_API_KEY, referenceDate } = req.body ?? {};
+  const {
+    transcript,
+    useLLM = !!process.env.ANTHROPIC_API_KEY,
+    referenceDate,
+    categoryContext,
+  } = req.body ?? {};
   if (typeof transcript !== 'string' || !transcript.trim()) {
     return res.status(400).json({ error: 'Body must include a non-empty "transcript" string.' });
   }
@@ -603,8 +638,16 @@ router.post('/parse', async (req, res) => {
   if (Number.isNaN(refDate.getTime())) {
     return res.status(400).json({ error: 'Invalid referenceDate — use ISO 8601 format.' });
   }
+  const normalizedContext = normalizeCategoryContext(categoryContext);
+  if (normalizedContext === null) {
+    return res.status(400).json({
+      error: 'Invalid categoryContext — expected an array of { label, description } objects.',
+    });
+  }
   let result = parseTranscript(transcript, { referenceDate: refDate });
-  if (useLLM) result = await refineWithLLM(transcript, result);
+  if (useLLM) {
+    result = await refineWithLLM(transcript, result, { categoryContext: normalizedContext });
+  }
   res.json(result);
 });
 

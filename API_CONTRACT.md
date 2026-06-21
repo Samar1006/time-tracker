@@ -249,7 +249,10 @@ Optional request field: `referenceDate` (ISO 8601) — anchor for resolving “t
 #### `POST /api/schedule/parse`
 
 **Status:** 🟡 On `ai-pipeline` PR #1 (not merged)  
-**Request:** `{ "transcript", "useLLM?": false, "referenceDate?": "2026-06-20T00:00:00.000Z" }`  
+**Request:** `{ "transcript", "useLLM?": false, "referenceDate?": "2026-06-20T00:00:00.000Z", "categoryContext?": [{ "label", "description" }] }`  
+
+Optional **`categoryContext`** (request-only, not stored): user-defined groupings passed to Claude when `useLLM` is true. Each item has a short `label` and `description`; the model maps them to the [Category enum](#category-enum) (`work`, `communication`, etc.). Heuristic parsing ignores this field.
+
 **Response:** `{ "blocks": [ Schedule block ] }`
 
 ---
