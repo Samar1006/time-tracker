@@ -108,19 +108,20 @@ Returned by `GET /api/timeline` for the hour-by-hour bar visualization.
 
 ### Schedule block (voice / AI)
 
-Output of transcript parsing. Times are **local wall-clock** 12-hour labels with AM/PM. Each block includes a calendar **`date`** (`YYYY-MM-DD`); spoken cues like “today”, “tomorrow”, or “Monday” set the date.
+Output of transcript parsing. Times are **local wall-clock** 12-hour labels with AM/PM. Each block includes a calendar **`date`** (`YYYY-MM-DD`) for when the block **starts**; spoken cues like “today”, “tomorrow”, or “Monday” set the date. When a block spans past midnight (e.g. sleep from 8:00 PM to 6:00 AM), include optional **`endDate`** (`YYYY-MM-DD`) for the morning end; omit `endDate` when start and end are on the same day.
 
 ```json
 {
   "date": "2026-06-20",
   "dayLabel": "today",
-  "start": "9:00 AM",
-  "end": "10:30 AM",
-  "durationMin": 90,
-  "activity": "worked on the dashboard",
-  "category": "work",
+  "start": "8:00 PM",
+  "end": "6:00 AM",
+  "endDate": "2026-06-21",
+  "durationMin": 600,
+  "activity": "sleeping",
+  "category": "break",
   "confidence": 0.6,
-  "raw": "From 9 to 10:30 I worked on the dashboard"
+  "raw": "I will sleep from 8 pm to 6 am"
 }
 ```
 

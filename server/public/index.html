@@ -216,7 +216,9 @@
       const label = formatDayHeading(date, dayBlocks[0]?.dayLabel);
       const rows = dayBlocks.map((b) => {
         const color = CAT_COLORS[b.category] || CAT_COLORS.uncategorized;
-        const timeRange = b.start && b.end ? `${b.start} – ${b.end}` : b.start || b.end || "—";
+        const timeRange = b.start && b.end
+          ? `${b.start} – ${b.end}${b.endDate && b.endDate !== b.date ? " (next day)" : ""}`
+          : b.start || b.end || "—";
         const dur = b.durationMin ? `${b.durationMin} min` : "";
         return `<div class="block" style="border-left-color:${color}">
           <div class="block-main">

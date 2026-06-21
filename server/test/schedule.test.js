@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseTranscript, toDateISO, normalizeCategoryContext } from '../src/routes/schedule.js';
+import { parseTranscript, toDateISO, normalizeCategoryContext, finalizeBlockSpan } from '../src/routes/schedule.js';
 import { sampleTranscripts } from '../src/data/sampleTranscripts.js';
 
 const REF = new Date('2026-06-20T12:00:00.000Z');
@@ -161,4 +161,45 @@ test('normalizeCategoryContext accepts optional LLM hint array', () => {
 test('empty transcript returns no blocks', () => {
   assert.deepEqual(parseTranscript('').blocks, []);
   assert.deepEqual(parseTranscript('   ').blocks, []);
+});
+
+test('overnight span sets endDate and duration across midnight', () => {
+  const { blocks } = parse('I will sleep from 8 pm to 6 am');
+  assert.equal(blocks.length, 1);
+  assert.equal(blocks[0].date, '2026-06-20');
+  assert.equal(blocks[0].endDate, '2026-06-21');
+  assert.equal(blocks[0].start, '8:00 PM');
+  assert.equal(blocks[0].end, '6:00 AM');
+  assert.equal(blocks[0].durationMin, 600);
+  assert.equal(blocks[0].activity, 'sleeping');
+  assert.equal(blocks[0].category, 'break');
+});
+
+test('tomorrow overnight span advances both start and end dates', () => {
+  const { blocks } = parse('Tomorrow at 8 pm to 6 am I will sleep');
+  assert.equal(blocks[0].date, '2026-06-21');
+  assert.equal(blocks[0].endDate, '2026-06-22');
+  assert.equal(blocks[0].durationMin, 600);
+});
+
+test('evening until end time wraps same day instead of overnight', () => {
+  const { blocks } = parse(sampleTranscripts[1].text);
+  assert.equal(blocks[1].start, '8:00 PM');
+  assert.equal(blocks[1].end, '9:00 PM');
+  assert.equal(blocks[1].durationMin, 60);
+  assert.equal(blocks[1].endDate, undefined);
+  assert.equal(blocks[2].start, '9:00 PM');
+});
+
+test('finalizeBlockSpan distinguishes overnight from same-day PM wrap', () => {
+  const overnight = finalizeBlockSpan('2026-06-20', 20 * 60, 6 * 60, 'from 8 pm to 6 am');
+  assert.equal(overnight.endDate, '2026-06-21');
+  assert.equal(overnight.durationMin, 600);
+  assert.equal(overnight.spansMidnight, true);
+
+  const wrap = finalizeBlockSpan('2026-06-20', 20 * 60, 9 * 60, 'until 9');
+  assert.equal(wrap.endDate, '2026-06-20');
+  assert.equal(wrap.endMin, 21 * 60);
+  assert.equal(wrap.durationMin, 60);
+  assert.equal(wrap.spansMidnight, false);
 });
