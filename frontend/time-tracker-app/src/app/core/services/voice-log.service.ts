@@ -11,12 +11,23 @@ export interface VoiceLogResult {
   added: number;
   parsed: number;
   updated: number;
+  /** When a block was moved to another day, jump the dashboard there. */
+  navigateToDate?: string;
+}
+
+/** Short-lived context so follow-ups like "actually push it back two hours" work. */
+export interface VoiceMutationContext {
+  lastEventId?: string;
+  lastTargetActivity?: string;
+  lastStorageDate?: string;
 }
 
 interface MutateResponse {
   applied: boolean;
   intent: 'mutate' | 'create';
   reason?: string;
+  voiceContext?: VoiceMutationContext;
+  navigateToDate?: string;
 }
 
 /**
@@ -32,8 +43,15 @@ export class VoiceLogService {
   readonly recording = signal(false);
   readonly busy = signal(false);
 
+  /** Remembers the last voice-created or voice-edited block for follow-up commands. */
+  private mutationContext: VoiceMutationContext | null = null;
+
   private recorder: MediaRecorder | null = null;
   private chunks: Blob[] = [];
+
+  clearMutationContext(): void {
+    this.mutationContext = null;
+  }
 
   async toggle(selectedDate: string): Promise<VoiceLogResult | null> {
     if (this.recording()) {
@@ -87,9 +105,20 @@ export class VoiceLogService {
 
           const referenceDate = `${selectedDate}T12:00:00.000Z`;
           const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-          const mutated = await this.tryMutate(transcript, referenceDate, selectedDate, timezone);
-          if (mutated) {
-            resolve({ transcript, added: 0, parsed: 0, updated: 1 });
+          const mutateResult = await this.tryMutate(
+            transcript,
+            referenceDate,
+            selectedDate,
+            timezone,
+          );
+          if (mutateResult?.applied) {
+            resolve({
+              transcript,
+              added: 0,
+              parsed: 0,
+              updated: 1,
+              navigateToDate: mutateResult.navigateToDate,
+            });
             return;
           }
 
@@ -107,9 +136,18 @@ export class VoiceLogService {
           const events = scheduleBlocksToEvents(blocks, selectedDate);
 
           if (events.length) {
-            await firstValueFrom(
-              this.http.post(`${environment.apiUrl}/api/events`, { events }),
+            const created = await firstValueFrom(
+              this.http.post<{ ids?: string[] }>(`${environment.apiUrl}/api/events`, { events }),
             );
+            const firstId = created.ids?.[0];
+            const firstTitle = events[0]?.title;
+            if (firstId && firstTitle) {
+              this.mutationContext = {
+                lastEventId: firstId,
+                lastTargetActivity: firstTitle,
+                lastStorageDate: selectedDate,
+              };
+            }
           }
 
           resolve({ transcript, added: events.length, parsed: blocks.length, updated: 0 });
@@ -123,13 +161,12 @@ export class VoiceLogService {
     });
   }
 
-  /** Returns true when a mutation was applied. */
   private async tryMutate(
     transcript: string,
     referenceDate: string,
     viewDate: string,
     timezone: string,
-  ): Promise<boolean> {
+  ): Promise<MutateResponse | null> {
     try {
       const result = await firstValueFrom(
         this.http.post<MutateResponse>(`${environment.apiUrl}/api/schedule/mutate`, {
@@ -137,13 +174,17 @@ export class VoiceLogService {
           referenceDate,
           viewDate,
           timezone,
+          voiceContext: this.mutationContext ?? undefined,
         }),
       );
-      return result.applied === true;
+      if (result.applied && result.voiceContext) {
+        this.mutationContext = result.voiceContext;
+      }
+      return result.applied ? result : null;
     } catch (err) {
       if (err instanceof HttpErrorResponse) {
         if (err.status === 422 && err.error?.intent === 'create') {
-          return false;
+          return null;
         }
         if (err.status === 404) {
           throw new Error(

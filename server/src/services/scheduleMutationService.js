@@ -11,40 +11,62 @@ import { loadEvents, replaceEvent } from './activityStore.js';
 import { localTimestamp } from '../utils/voiceBlockConversion.js';
 import {
   extractDurationMinutes,
+  resolveCalendarDate,
   resolveDayFromSegment,
   toDateISO,
 } from '../routes/schedule.js';
 
 const MIN_DURATION_SEC = 15 * 60;
 const MUTABLE_TYPES = new Set(['voice', 'manual']);
+const GENERIC_TARGETS = new Set(['it', 'that', 'this', 'the event', 'the block']);
 
-const WEEKDAY_FRAGMENT =
-  'tomorrow|today|yesterday|next\\s+(?:week|(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday|mon|tue|tues|wed|thu|thur|thurs|fri|sat|sun))|(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday|mon|tue|tues|wed|thu|thur|thurs|fri|sat|sun)';
+/** @typedef {{ lastEventId?: string, lastTargetActivity?: string, lastStorageDate?: string }} VoiceMutationContext */
 
 /** True when transcript looks like an edit, not a new activity log. */
-export function isMutationTranscript(transcript) {
+export function isMutationTranscript(transcript, context = null) {
   const t = String(transcript ?? '').trim().toLowerCase();
   if (!t) return false;
   if (/\b(?:from|between)\s+.+\s+(?:to|until|till)\s+\d/.test(t)) return false;
   if (/\b(?:from|between)\s+.+\s+(?:to|until|till)\s+(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|\d)/.test(t)) {
     return false;
   }
-  if (/\b(?:i\s+)?(?:worked|studied|slept|ate|had|went|spent)\b/.test(t) && !/\b(?:push|move|shorten|reschedule|delay)\s+my\b/.test(t)) {
+  if (/\b(?:i\s+)?(?:worked|studied|slept|ate|had|went|spent)\b/.test(t) && !/\b(?:push|move|shorten|reschedule|delay)\s+(?:my|it|that|this)\b/.test(t)) {
     return false;
   }
+
+  const hasContext = Boolean(context?.lastEventId || context?.lastTargetActivity);
+  if (hasContext) {
+    if (/\b(?:actually|instead|wait|sorry|no|okay)\b/.test(t) && /\b(?:push|shift|move|shorten|extend|delay|reschedule)\b/.test(t)) {
+      return true;
+    }
+    if (/\b(?:push|move|shift|shorten|extend)\s+(?:it|that|this)\b/.test(t)) return true;
+    if (/\b(?:one|two|three|\d+)\s+more\s+hours?\b/.test(t) && /\b(?:back|later|forward|earlier)\b/.test(t)) {
+      return true;
+    }
+  }
+
   return (
     /\b(?:push|delay|postpone|reschedule|shift)\b/.test(t)
-    || /\bmove\s+(?:my\s+)?\w+/.test(t)
-    || /\b(?:shorten|reduce|cut|extend|lengthen)\s+(?:my\s+)?\w+/.test(t)
+    || /\bmove\s+(?:my\s+)?(?:\w+|it|that|this)\b/.test(t)
+    || /\b(?:shorten|reduce|cut|extend|lengthen)\s+(?:my\s+)?(?:\w+|it|that|this)\b/.test(t)
   );
 }
 
 function stripTargetPhrase(text) {
   return String(text ?? '')
-    .replace(/^(?:please\s+)?(?:can you\s+)?/i, '')
+    .replace(/^(?:please\s+)?(?:can you\s+)?(?:actually\s+|instead\s+|wait\s+|sorry\s+)?/i, '')
     .replace(/\b(?:my|the|a|an)\b/gi, ' ')
+    .replace(/\b(?:today|tomorrow|yesterday)\b/gi, ' ')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+function resolveTargetActivity(extracted, context) {
+  const cleaned = stripTargetPhrase(extracted);
+  if (cleaned.length >= 2 && !GENERIC_TARGETS.has(cleaned.toLowerCase())) {
+    return cleaned;
+  }
+  return context?.lastTargetActivity ?? null;
 }
 
 function extractTargetActivity(transcript) {
@@ -63,6 +85,29 @@ function extractTargetActivity(transcript) {
   return null;
 }
 
+/** Parse the destination day phrase after "to" in move/reschedule commands. */
+export function extractMoveDestination(transcript, referenceDate) {
+  const t = transcript.trim();
+  const moveRe = /\b(?:move|reschedule|shift)\s+(?:(?:my|the|a|an)\s+)?(?:(?:\w+\s+){0,4}\w+\s+|(?:it|that|this)\s+)??to\s+(.+)$/i;
+  const m = t.match(moveRe);
+  if (!m?.[1]) return null;
+
+  const dest = m[1].replace(/[.!?]+$/, '').trim();
+  if (!dest) return null;
+
+  const calendar = resolveCalendarDate(dest, referenceDate);
+  if (calendar?.date) return calendar.date;
+
+  const day = resolveDayFromSegment(dest, referenceDate, null);
+  if (!day?.date) return null;
+
+  const hasExplicitDay =
+    /\b(?:tomorrow|yesterday|next\s+|today)\b/i.test(dest)
+    || /\b(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday|mon|tue|tues|wed|thu|thur|thurs|fri|sat|sun)\b/i.test(dest);
+
+  return hasExplicitDay ? day.date : null;
+}
+
 /**
  * @returns {{
  *   action: 'shift_start' | 'move_date' | 'resize',
@@ -72,28 +117,23 @@ function extractTargetActivity(transcript) {
  *   direction: 1 | -1,
  * } | null}
  */
-export function parseMutationTranscript(transcript, referenceDate = new Date()) {
-  if (!isMutationTranscript(transcript)) return null;
+export function parseMutationTranscript(transcript, referenceDate = new Date(), context = null) {
+  if (!isMutationTranscript(transcript, context)) return null;
 
   const t = transcript.trim();
   const lower = t.toLowerCase();
-  const targetActivity = extractTargetActivity(t);
+  const extractedTarget = extractTargetActivity(t);
+  const targetActivity = resolveTargetActivity(extractedTarget, context);
 
-  const moveTo = lower.match(
-    new RegExp(`\\bmove\\s+(?:my\\s+)?(?:\\w+\\s+){0,3}\\w+\\s+to\\s+(${WEEKDAY_FRAGMENT}(?:\\s+\\w+)*)`, 'i'),
-  );
-  if (moveTo) {
-    const daySeg = moveTo[1];
-    const resolved = resolveDayFromSegment(daySeg, referenceDate, null);
-    if (resolved?.date) {
-      return {
-        action: 'move_date',
-        targetActivity,
-        deltaMin: null,
-        newDate: resolved.date,
-        direction: 1,
-      };
-    }
+  const moveDate = extractMoveDestination(t, referenceDate);
+  if (moveDate) {
+    return {
+      action: 'move_date',
+      targetActivity,
+      deltaMin: null,
+      newDate: moveDate,
+      direction: 1,
+    };
   }
 
   const shorten = /\b(?:shorten|reduce|cut|trim)\b/.test(lower);
@@ -123,11 +163,15 @@ export function parseMutationTranscript(transcript, referenceDate = new Date()) 
   };
 }
 
-function scoreEventMatch(event, targetActivity, viewDate, timeZone) {
+function scoreEventMatch(event, targetActivity, viewDate, timeZone, context) {
   if (!MUTABLE_TYPES.has(event.type)) return -1;
 
   const label = activityLabel(event).toLowerCase();
   let score = 0;
+
+  if (context?.lastEventId && event.id === context.lastEventId) {
+    score += 100;
+  }
 
   if (targetActivity) {
     const terms = targetActivity.toLowerCase().split(/\s+/).filter((w) => w.length > 2);
@@ -138,7 +182,9 @@ function scoreEventMatch(event, targetActivity, viewDate, timeZone) {
         if (label.includes(term)) score += 8;
       }
     }
-    if (score === 0) return -1;
+    if (score === 0 && !(context?.lastEventId && event.id === context.lastEventId)) return -1;
+  } else if (context?.lastEventId && event.id === context.lastEventId) {
+    score += 10;
   } else {
     score += 2;
   }
@@ -239,19 +285,28 @@ function applyResize(event, deltaMin, direction, timeZone) {
   return syncOvernightMetadata(next, timeZone);
 }
 
-async function loadCandidateEvents(userId, viewDate, timeZone) {
-  const dates = [
+async function loadCandidateEvents(userId, viewDate, timeZone, context = null) {
+  const dates = new Set([
     addDaysISO(viewDate, -1),
     viewDate,
     addDaysISO(viewDate, 1),
     addDaysISO(viewDate, 7),
-  ];
-  const uniqueDates = [...new Set(dates)];
+    addDaysISO(viewDate, 14),
+  ]);
+
+  if (context?.lastStorageDate) {
+    dates.add(context.lastStorageDate);
+  }
+
   const byId = new Map();
 
-  for (const date of uniqueDates) {
+  for (const date of dates) {
     const dayEvents = await loadEvents(userId, date);
     for (const event of dayEvents) {
+      if (context?.lastEventId && event.id === context.lastEventId) {
+        byId.set(event.id, { event, storageDate: date });
+        continue;
+      }
       if (MUTABLE_TYPES.has(event.type) && eventOverlapsLocalDate(event, viewDate, timeZone)) {
         byId.set(event.id, { event, storageDate: date });
       } else if (MUTABLE_TYPES.has(event.type) && date === viewDate) {
@@ -263,12 +318,12 @@ async function loadCandidateEvents(userId, viewDate, timeZone) {
   return [...byId.values()];
 }
 
-function pickBestMatch(candidates, targetActivity, viewDate, timeZone) {
+function pickBestMatch(candidates, targetActivity, viewDate, timeZone, context) {
   let best = null;
   let bestScore = -1;
 
   for (const candidate of candidates) {
-    const score = scoreEventMatch(candidate.event, targetActivity, viewDate, timeZone);
+    const score = scoreEventMatch(candidate.event, targetActivity, viewDate, timeZone, context);
     if (score > bestScore) {
       bestScore = score;
       best = candidate;
@@ -276,6 +331,15 @@ function pickBestMatch(candidates, targetActivity, viewDate, timeZone) {
   }
 
   return bestScore > 0 ? best : null;
+}
+
+function buildVoiceContext(event) {
+  const storageDate = eventStorageDate(event);
+  return {
+    lastEventId: event.id,
+    lastTargetActivity: activityLabel(event),
+    lastStorageDate: storageDate ?? undefined,
+  };
 }
 
 function eventStorageDate(event) {
@@ -294,26 +358,27 @@ export async function applyScheduleMutation({
   referenceDate = new Date(),
   viewDate,
   timeZone = 'UTC',
+  voiceContext = null,
 }) {
-  const mutation = parseMutationTranscript(transcript, referenceDate);
+  const mutation = parseMutationTranscript(transcript, referenceDate, voiceContext);
   if (!mutation) {
     return { applied: false, intent: 'create', reason: 'not_a_mutation' };
   }
 
   const refDate = referenceDate instanceof Date ? referenceDate : new Date(referenceDate);
   const day = viewDate ?? toDateISO(refDate);
-  const candidates = await loadCandidateEvents(userId, day, timeZone);
+  const candidates = await loadCandidateEvents(userId, day, timeZone, voiceContext);
 
   if (candidates.length === 0) {
     return { applied: false, intent: 'mutate', reason: 'no_events_to_edit' };
   }
 
-  const match = pickBestMatch(candidates, mutation.targetActivity, day, timeZone);
+  const match = pickBestMatch(candidates, mutation.targetActivity, day, timeZone, voiceContext);
   if (!match) {
     return {
       applied: false,
       intent: 'mutate',
-      reason: mutation.targetActivity ? 'no_matching_event' : 'ambiguous_target',
+      reason: mutation.targetActivity || voiceContext?.lastEventId ? 'no_matching_event' : 'ambiguous_target',
     };
   }
 
@@ -342,6 +407,8 @@ export async function applyScheduleMutation({
       newDate: mutation.newDate,
     },
     event: saved,
+    voiceContext: buildVoiceContext(saved),
+    navigateToDate: mutation.action === 'move_date' ? mutation.newDate : eventStorageDate(saved),
   };
 }
 

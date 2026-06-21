@@ -835,6 +835,7 @@ router.post('/mutate', requireAuth, async (req, res) => {
     referenceDate,
     viewDate,
     timezone = 'UTC',
+    voiceContext,
   } = req.body ?? {};
 
   if (typeof transcript !== 'string' || !transcript.trim()) {
@@ -853,6 +854,7 @@ router.post('/mutate', requireAuth, async (req, res) => {
     referenceDate: refDate,
     viewDate: day,
     timeZone: timezone,
+    voiceContext: voiceContext && typeof voiceContext === 'object' ? voiceContext : null,
   });
 
   if (!result.applied) {
