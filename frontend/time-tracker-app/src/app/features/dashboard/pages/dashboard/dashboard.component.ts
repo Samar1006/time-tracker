@@ -15,6 +15,7 @@ import { toObservable, toSignal } from '@angular/core/rxjs-interop';
 
 import { AuthService } from '../../../../core/services/auth.service';
 import { TimelineService } from '../../../../core/services/timeline.service';
+import { VoiceLogService } from '../../../../core/services/voice-log.service';
 import { ActivityCalendarComponent } from '../../components/activity-calendar/activity-calendar.component';
 import { DashboardHeaderComponent } from '../../components/dashboard-header/dashboard-header.component';
 import { DashboardSidebarComponent } from '../../components/dashboard-sidebar/dashboard-sidebar.component';
@@ -54,6 +55,7 @@ const REFRESH_MS = 60_000;
 export class DashboardComponent {
   readonly auth = inject(AuthService);
   private readonly timelineService = inject(TimelineService);
+  readonly voiceLog = inject(VoiceLogService);
 
   constructor() {
     effect(() => {
@@ -69,11 +71,15 @@ export class DashboardComponent {
   readonly loading = signal(true);
   readonly error = signal<string | null>(null);
   readonly monthTotals = signal(new Map<string, number>());
+  readonly lastHeard = signal<string | null>(null);
+  readonly voiceError = signal<string | null>(null);
+  private readonly reloadTick = signal(0);
 
   private readonly dashboardState = toSignal(
     combineLatest([
       toObservable(this.selectedDate),
-      toObservable(this.auth.user)
+      toObservable(this.auth.user),
+      toObservable(this.reloadTick)
     ]).pipe(
       switchMap(([date, user]) =>
         interval(REFRESH_MS).pipe(
@@ -196,7 +202,34 @@ export class DashboardComponent {
     this.visibleMonth.set(monthKeyFromDate(date));
   }
 
-  onVoiceLog(): void {
-    console.log('Voice log clicked');
+  async onVoiceLog(): Promise<void> {
+    this.voiceError.set(null);
+    try {
+      const result = await this.voiceLog.toggle(this.selectedDate());
+      if (!result) return;
+
+      if (!result.transcript) {
+        this.voiceError.set(
+          'No speech detected. Speak for a few seconds, then tap Stop.',
+        );
+        return;
+      }
+
+      this.lastHeard.set(result.transcript);
+      if (result.added > 0) {
+        this.reloadTick.update((n) => n + 1);
+      } else if (result.parsed > 0) {
+        this.voiceError.set(
+          'Heard you, but could not place times on the timeline. Try mentioning times like "9 to 10 AM".',
+        );
+      } else {
+        this.voiceError.set(
+          'Heard you, but could not parse activities. Try "9 to 10 AM coding, then lunch".',
+        );
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Voice log failed';
+      this.voiceError.set(msg);
+    }
   }
 }

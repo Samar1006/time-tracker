@@ -51,10 +51,35 @@
   cursor: pointer;
   transition: background 0.15s ease, transform 0.15s ease;
 
-  &:hover {
+  &:hover:not(:disabled) {
     background: var(--color-primary-hover);
     transform: translateY(-1px);
   }
+
+  &:disabled {
+    opacity: 0.7;
+    cursor: wait;
+  }
+
+  &--recording {
+    background: #dc2626;
+    box-shadow: 0 8px 24px rgba(220, 38, 38, 0.35);
+
+    &:hover:not(:disabled) {
+      background: #b91c1c;
+    }
+  }
+}
+
+.dashboard-voice-heard {
+  margin: 0;
+  font-size: 0.8125rem;
+  color: var(--color-text-muted);
+  text-align: right;
+}
+
+.dashboard-voice-error {
+  color: #dc2626;
 }
 
 .dashboard-shell__status {
