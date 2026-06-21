@@ -1,93 +1,117 @@
 # Tasks
 
-> **Foreman rule:** Update status, owners, blockers, and next steps here when you start or finish work. If unsure, add a **Question** instead of guessing.
+> **All agents:** Read this file and [`API_CONTRACT.md`](API_CONTRACT.md) before starting work. Update your task status when you finish.
 
-**Last foreman check:** 2026-06-20 — `ai-pipeline` merged; `ingestion-timeline` deleted
-
----
-
-## Foreman scope
-
-| Foreman does | Foreman does **not** |
-|--------------|----------------------|
-| Track branch ahead/behind `main` | Review or approve PRs (→ **PR review agent**) |
-| Keep `API_CONTRACT.md` / `TASKS.md` / `DECISIONS.md` current | Merge PRs |
-| Flag merge conflicts & integration drift | Build features |
-| Coordinate merge order | Overwrite teammates' in-progress work |
+**Last foreman check:** 2026-06-21 — all backend + auth merged; frontend integration is next
 
 ---
 
-## Branch status (live)
+## Team delegation (current sprint)
 
-| Branch | Owner | vs `main` | PR | Health | Action |
-|--------|-------|-----------|-----|--------|--------|
-| `main` | — | — | — | 🟢 Full backend (25 tests) | Integration target |
-| `ai-pipeline` | Allisonmini | merged ([#1](https://github.com/Samar1006/time-tracker/pull/1)) | — | ⚪ Done | Deleted |
-| `dj` | Frontend | **+1** / 0 | [#3](https://github.com/Samar1006/time-tracker/pull/3) open | 🟢 Ready | PR review agent reviewing |
+> **Important:** `ai-pipeline` and `dj` are **merged into `main`**. Do not keep building on those old branch names. Branch fresh from `main`.
 
-### Merge order (do not reorder)
+### Allisonmini — AI follow-ups
 
-```
-1. ~~ai-pipeline → main~~ ✅ Done (PR #1)
-2. ~~dj → main~~ 🟡 PR [#3](https://github.com/Samar1006/time-tracker/pull/3) open (rebased, ready for review)
-3. categoryHint → categorizationService swap (small follow-up on main)
-```
+**Branch from `main`:** `git checkout main && git pull && git checkout -b ai-followups`
+
+| Priority | Task | Owns | Do NOT touch |
+|----------|------|------|--------------|
+| P0 | Replace `categoryHint` → `categorizationService` in timeline aggregation | `server/src/services/aggregationService.js` | `frontend/`, `auth.js`, `activity.js` |
+| P1 | Voice demo polish: document `/api/transcribe` → `/api/schedule/parse` chain | `server/README.md` | Frontend |
+| P2 | Deepgram live demo error handling | `server/src/app.js` transcribe handler | — |
+
+**Done (on `main`, don't redo):** schedule parse, categorize, transcribe, Deepgram service.
+
+---
+
+### Frontend team — integration + timeline UI
+
+**Branch from `main`:** `git checkout main && git pull && git checkout -b frontend-integration`
+
+| Priority | Task | Owns | Do NOT touch |
+|----------|------|------|--------------|
+| P0 | `AuthService` → `POST /api/auth/login`, `/signup`, `/me`; store JWT | `frontend/time-tracker-app/src/app/` | `server/` |
+| P0 | Dev proxy: `/api` → `http://localhost:4000` | `frontend/time-tracker-app/angular.json` | — |
+| P0 | Wire login + signup components (remove TODOs) | `login.component.ts`, `signup.component.ts` | — |
+| P1 | Timeline page + hour bar chart | new feature module | — |
+| P1 | Post-login route → timeline (use `user.id` from auth response) | `app.routes.ts` | — |
+| P2 | Google OAuth button | **Skip for hackathon** — no backend support yet | — |
+
+**Demo credentials** (see `server/README.md`):
+- Email: `demo@timetracker.test` / Password: `Demo1234!` / User ID: `user-demo-1`
+
+**Done (on `main`, don't redo):** login/signup UI shell, auth layout.
+
+---
+
+### Samar / foreman — integration only
+
+- Keep `API_CONTRACT.md`, `TASKS.md`, `DECISIONS.md` current
+- Track branch health; do not build features unless asked
+- PR review agent handles merge approval
+
+---
+
+## Branch status
+
+| Branch | Status | Action |
+|--------|--------|--------|
+| `main` | 🟢 Full backend + auth API + auth UI shell (30 tests) | Everyone branches from here |
+| `ai-pipeline` | ⚪ Merged & deleted | Use `ai-followups` for new AI work |
+| `dj` | ⚪ Merged | Use `frontend-integration` for new frontend work |
+| `ingestion-timeline` | ⚪ Merged & deleted | — |
+| `auth-backend` | ⚪ Merged | Delete local/remote if still around |
 
 ---
 
 ## MVP progress
 
-| # | Priority | Task | Owner | Status | Branch |
-|---|----------|------|-------|--------|--------|
-| 1 | P0 | `POST /api/events` + Redis | Samar | ✅ Merged | `main` |
-| 2 | P0 | `GET /api/timeline` hour buckets | Samar | ✅ Merged | `main` |
-| 3 | P0 | Demo seed + fallback JSON | Samar | ✅ Merged | `main` |
-| 4 | P0 | Schedule parse + categorization | Allisonmini | ✅ Merged | `main` |
-| 5 | P0 | `POST /api/transcribe` | Allisonmini | ✅ Merged | `main` |
-| 6 | P1 | Frontend auth shell | Frontend | 🟡 PR #3 open | `dj` |
-| 7 | P1 | Timeline bar chart UI | Frontend | 🔲 Not started | `dj` |
-| 8 | P1 | Swap `categoryHint` → `categorizationService` | Samar / Allison | 🔲 After #4 merges | `main` |
-| 9 | P2 | Native mac/iOS/browser capture | TBD | 🔲 Not started | — |
+| # | Task | Owner | Status |
+|---|------|-------|--------|
+| 1 | Activity ingest + Redis | Samar | ✅ `main` |
+| 2 | Timeline API + demo seed | Samar | ✅ `main` |
+| 3 | AI pipeline (schedule, categorize, transcribe) | Allisonmini | ✅ `main` |
+| 4 | JWT auth backend | Samar | ✅ `main` |
+| 5 | Auth UI shell (Angular) | Frontend | ✅ `main` (not wired) |
+| 6 | Wire auth UI → auth API | Frontend | 🔲 `frontend-integration` |
+| 7 | Timeline bar chart | Frontend | 🔲 `frontend-integration` |
+| 8 | `categoryHint` → `categorizationService` | Allisonmini | 🔲 `ai-followups` |
+| 9 | Native tracking | TBD | 🔲 P2 |
 
 ---
 
-## Samar — ingestion (merged)
+## Integration rules (avoid conflicts)
 
-**Status:** ✅ On `main`. ~~Branch `ingestion-timeline`~~ deleted (merged via PR #2).
-
-**Standby:** After `ai-pipeline` merges, replace `categoryHint.js` imports in `aggregationService.js` with `categorizationService.js`.
-
----
-
-## Allisonmini — AI & voice (merged)
-
-**Status:** ✅ Merged to `main` via PR #1. Branch `ai-pipeline` deleted.
-
-**On `main`:** schedule parse, categorize, transcribe, integrated `app.js`.
+1. **AI teammate** edits only `server/` files they own (aggregation categorization swap, AI docs).
+2. **Frontend teammate** edits only `frontend/time-tracker-app/`.
+3. **Never** change API routes or shapes without updating `API_CONTRACT.md` in the same PR.
+4. **Never** re-scaffold `server/package.json` or `app.js` — both slices already merged.
 
 ---
 
-## Frontend — Angular (`dj`)
+## Quick local test
 
-**Status:** Rebased onto `main`. PR [#3](https://github.com/Samar1006/time-tracker/pull/3) open — PR review agent reviewing.
+```bash
+# Backend
+cd server && npm install && npm run dev   # :4000
 
-**On branch:** Login + signup pages, auth layout (Angular 21 under `frontend/time-tracker-app/`).  
-**Not yet built:** Timeline bar chart wired to `GET /api/timeline`.
+# Auth
+curl http://localhost:4000/api/auth/demo-account
+curl -X POST http://localhost:4000/api/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"demo@timetracker.test","password":"Demo1234!"}'
 
----
+# Timeline
+curl "http://localhost:4000/api/timeline?userId=user-demo-1&date=2026-06-20"
 
-## Integration risks
-
-| Risk | Severity | Mitigation |
-|------|----------|------------|
-| `dj` rebased before `ai-pipeline` merges | 🟢 Low | Frontend only needs `/api/timeline` (already on `main`) |
-| `dj` rebased | 🟢 Done | PR #3 open, 0 commits behind `main` |
-| `ai-pipeline` remote branch | 🟢 Done | Deleted |
+# Frontend (UI only — not wired yet)
+cd frontend/time-tracker-app && npm install && npm start   # :4200
+```
 
 ---
 
 ## Questions for the team
 
-1. **Who owns `dj`?** Assign name in this table.
-2. **Timeline UI timing:** start on rebased `dj` now, or wait for `ai-pipeline` merge?
-3. ~~**Delete `backend/.gitkeep`** and stale `ingestion-timeline` branch?~~ `ingestion-timeline` deleted.
+1. Frontend owner name for the delegation table?
+2. Should `/api/timeline` require JWT, or keep `userId` query param for hackathon?
+3. Delete stale `auth-backend` branch?
