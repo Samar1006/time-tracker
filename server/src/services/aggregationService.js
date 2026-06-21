@@ -1,6 +1,6 @@
 // aggregationService.js — bucket raw events into hour-by-hour timeline blocks.
 
-import { hintCategory } from './categoryHint.js';
+import { categorizeDomain, categorizeText } from './categorizationService.js';
 
 const MS_PER_SEC = 1000;
 
@@ -134,11 +134,10 @@ export function aggregateTimeline(events, date, { userId, timezone = 'UTC' } = {
     const roundedSec = Math.round(slice.durationSec);
     if (roundedSec <= 0) continue;
 
-    const { category, confidence } = hintCategory({
-      label: activityLabel(slice.event),
-      domain: slice.event.domain,
-      kind: slice.event.domain ? 'domain' : 'app',
-    });
+    // Use the shared AI categorizer: by domain when present, else by label text.
+    const { category, confidence } = slice.event.domain
+      ? categorizeDomain(slice.event.domain)
+      : categorizeText(activityLabel(slice.event));
 
     const hourBucket = hours[slice.hour];
     hourBucket.blocks.push({
