@@ -7,16 +7,13 @@ import {
   ApiUser,
   AuthResponse,
   AuthUser,
+  GoogleLoginRequest,
   LoginRequest,
   SignupRequest
 } from '../models/auth.model';
 
 const TOKEN_KEY = 'time-tracker-token';
 const USER_KEY = 'time-tracker-user';
-
-/** Matches server seeded demo account (see server/src/services/authService.js). */
-const DEMO_EMAIL = 'demo@timetracker.test';
-const DEMO_PASSWORD = 'Demo1234!';
 
 @Injectable({ providedIn: 'root' })
 export class AuthService {
@@ -45,8 +42,11 @@ export class AuthService {
       .pipe(map((response) => this.applyAuthResponse(response)));
   }
 
-  loginWithDemoAccount(): Observable<AuthUser> {
-    return this.login(DEMO_EMAIL, DEMO_PASSWORD);
+  loginWithGoogle(credential: string): Observable<AuthUser> {
+    const body: GoogleLoginRequest = { credential };
+    return this.http
+      .post<AuthResponse>(`${environment.apiUrl}/api/auth/google`, body)
+      .pipe(map((response) => this.applyAuthResponse(response)));
   }
 
   restoreSession(): Observable<void> {

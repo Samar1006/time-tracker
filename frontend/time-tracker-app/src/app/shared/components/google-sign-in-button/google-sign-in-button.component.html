@@ -1,4 +1,8 @@
-<button type="button" class="google-btn" (click)="onClick()">
-  <img src="assets/auth/google-logo.svg" alt="" width="20" height="20" aria-hidden="true" />
-  Continue with Google
-</button>
+@if (isConfigured) {
+  <div #googleButton class="google-btn-host"></div>
+} @else {
+  <button type="button" class="google-btn google-btn--disabled" disabled>
+    <img src="assets/auth/google-logo.svg" alt="" width="20" height="20" aria-hidden="true" />
+    Add Google Client ID
+  </button>
+}

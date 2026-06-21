@@ -24,3 +24,25 @@
     outline-offset: 2px;
   }
 }
+
+.google-btn-host {
+  width: 100%;
+  min-height: 50px;
+  display: grid;
+  place-items: center;
+}
+
+.google-btn-host > div {
+  width: 100% !important;
+}
+
+.google-btn--disabled {
+  opacity: 0.68;
+  cursor: not-allowed;
+
+  &:hover {
+    transform: none;
+    background: var(--color-white);
+    border-color: var(--color-border);
+  }
+}
