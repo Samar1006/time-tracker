@@ -227,8 +227,12 @@
       [style.left.px]="tip.x"
       [style.top.px]="tip.y"
     >
-      <strong>{{ tip.category }}</strong> · {{ tip.duration }}
-      <span class="day-calendar__tooltip-sub">{{ tip.timeRange }} · {{ tip.activity }}</span>
+      <div class="day-calendar__tooltip-head">
+        <strong>{{ tip.category }}</strong>
+        <span class="day-calendar__tooltip-duration">{{ tip.duration }}</span>
+      </div>
+      <span class="day-calendar__tooltip-line">{{ tip.timeRange }}</span>
+      <span class="day-calendar__tooltip-line">{{ tip.activity }}</span>
     </div>
   }
 </section>

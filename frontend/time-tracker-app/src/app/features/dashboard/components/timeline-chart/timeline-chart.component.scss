@@ -96,6 +96,12 @@
   overscroll-behavior: contain;
   -webkit-overflow-scrolling: touch;
   touch-action: pan-y;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+
+  &::-webkit-scrollbar {
+    display: none;
+  }
 }
 
 .day-calendar__layout {
@@ -376,7 +382,19 @@
   white-space: nowrap;
 }
 
-.day-calendar__tooltip-sub {
+.day-calendar__tooltip-head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+}
+
+.day-calendar__tooltip-duration {
+  font-size: 0.75rem;
+  font-weight: 500;
+  opacity: 0.85;
+}
+
+.day-calendar__tooltip-line {
   font-size: 0.75rem;
   opacity: 0.85;
 }
