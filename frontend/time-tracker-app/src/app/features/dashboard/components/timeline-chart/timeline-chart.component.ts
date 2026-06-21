@@ -1,4 +1,4 @@
-import { Component, computed, effect, ElementRef, afterEveryRender, input, output, signal, untracked, viewChild } from '@angular/core';
+import { Component, computed, effect, ElementRef, afterEveryRender, afterNextRender, input, output, signal, untracked, viewChild } from '@angular/core';
 
 import {
   CATEGORY_COLORS,
@@ -10,11 +10,15 @@ import { formatDuration, formatHourLabel } from '../../../../core/utils/duration
 import { DayDateNavComponent } from '../../../../shared/components/day-date-nav/day-date-nav.component';
 import {
   DragMode,
+  EventCreateDraft,
   EventTimePatch,
   RESIZE_HANDLE_PX,
+  buildCreateEventDraft,
   buildEventTimePatch,
+  clampDownwardCreateInterval,
   clampIntervalToDay,
-  deltaPxToMinutes
+  deltaPxToMinutes,
+  offsetYToMinutes
 } from './timeline-drag.util';
 
 interface TooltipState {
@@ -220,6 +224,17 @@ interface DragPreview {
   endMin: number;
 }
 
+interface CreatePreview {
+  previewTopPct: number;
+  previewHeightPct: number;
+  startMin: number;
+  endMin: number;
+}
+
+interface ActiveCreateDrag {
+  anchorStartMin: number;
+}
+
 @Component({
   selector: 'app-timeline-chart',
   imports: [DayDateNavComponent],
@@ -235,10 +250,16 @@ export class TimelineChartComponent {
   readonly nextDay = output<void>();
   readonly selectDate = output<string>();
   readonly eventTimeChange = output<EventTimePatch>();
+  readonly activityCreate = output<EventCreateDraft>();
 
   readonly patchError = input<string | null>(null);
+  readonly createBusy = input(false);
 
   private readonly scrollContainer = viewChild<ElementRef<HTMLElement>>('scrollContainer');
+  private readonly calendarCanvas = viewChild<ElementRef<HTMLElement>>('calendarCanvas');
+  private readonly createLabelInput = viewChild<ElementRef<HTMLInputElement>>('createLabelInput');
+  private skipCreateLabelBlur = false;
+  private createBusyWasTrue = false;
   private pinchStartScale = MIN_ZOOM;
   private pointerAnchorY = 0;
   private savedScrollTop = 0;
@@ -251,13 +272,20 @@ export class TimelineChartComponent {
   readonly tooltip = signal<TooltipState | null>(null);
   readonly activeDrag = signal<ActiveDrag | null>(null);
   readonly dragPreview = signal<DragPreview | null>(null);
+  readonly activeCreateDrag = signal<ActiveCreateDrag | null>(null);
+  readonly createPreview = signal<CreatePreview | null>(null);
+  readonly labelingCreate = signal<CreatePreview | null>(null);
+  readonly createLabel = signal('');
   readonly categoryLegend = CATEGORY_LEGEND;
   readonly categoryLabels = CATEGORY_LABELS;
   readonly resizeHandlePx = RESIZE_HANDLE_PX;
 
   private readonly boundPointerMove = (event: PointerEvent) => this.onDragPointerMove(event);
   private readonly boundPointerUp = (event: PointerEvent) => this.onDragPointerUp(event);
+  private readonly boundCreatePointerMove = (event: PointerEvent) => this.onCreatePointerMove(event);
+  private readonly boundCreatePointerUp = (event: PointerEvent) => this.onCreatePointerUp(event);
   private dragCaptureEl: HTMLElement | null = null;
+  private createCaptureEl: HTMLElement | null = null;
 
   readonly pxPerHour = computed(() => BASE_PX_PER_HOUR * this.zoomScale());
   readonly canvasHeightPx = computed(() => HOURS_PER_DAY * this.pxPerHour());
@@ -298,7 +326,29 @@ export class TimelineChartComponent {
     effect(() => {
       if (this.patchError()) {
         this.cancelDrag();
+        this.cancelCreateDrag();
+        this.cancelActivityLabel();
       }
+    });
+
+    effect(() => {
+      if (!this.labelingCreate()) {
+        return;
+      }
+      afterNextRender(() => {
+        const input = this.createLabelInput()?.nativeElement;
+        input?.focus();
+        input?.select();
+      });
+    });
+
+    effect(() => {
+      const busy = this.createBusy();
+      if (this.createBusyWasTrue && !busy && !this.patchError()) {
+        this.labelingCreate.set(null);
+        this.createLabel.set('');
+      }
+      this.createBusyWasTrue = busy;
     });
 
     effect(() => {
@@ -306,11 +356,13 @@ export class TimelineChartComponent {
       if (!this.activeDrag()) {
         this.dragPreview.set(null);
       }
+      if (!this.activeCreateDrag()) {
+        this.createPreview.set(null);
+      }
     });
 
     effect(() => {
       const date = this.date();
-      this.hours();
 
       if (this.stableDate === '') {
         this.stableDate = date;
@@ -325,7 +377,9 @@ export class TimelineChartComponent {
 
       this.pendingDateChange = dateChanged;
       this.pendingDate = date;
-      this.scrollRestorePending = true;
+      if (dateChanged) {
+        this.scrollRestorePending = true;
+      }
     });
 
     afterEveryRender(() => {
@@ -343,6 +397,7 @@ export class TimelineChartComponent {
       if (this.pendingDateChange) {
         container.scrollTop = 0;
         this.stableDate = this.pendingDate;
+        this.cancelActivityLabel();
         return;
       }
 
@@ -444,7 +499,35 @@ export class TimelineChartComponent {
       return;
     }
     event.preventDefault();
+    event.stopPropagation();
     this.startDrag(event, positioned, 'move');
+  }
+
+  onCanvasPointerDown(event: PointerEvent): void {
+    if (event.button !== 0 || event.target !== event.currentTarget) {
+      return;
+    }
+    if (this.activeDrag() || this.activeCreateDrag() || this.labelingCreate()) {
+      return;
+    }
+
+    const canvas = this.calendarCanvas()?.nativeElement;
+    if (!canvas) {
+      return;
+    }
+
+    event.preventDefault();
+    const anchorStartMin = this.clientYToMinutes(event.clientY, canvas);
+
+    this.hideTooltip();
+    this.activeCreateDrag.set({ anchorStartMin });
+    this.updateCreatePreview(anchorStartMin);
+
+    document.addEventListener('pointermove', this.boundCreatePointerMove);
+    document.addEventListener('pointerup', this.boundCreatePointerUp);
+    document.addEventListener('pointercancel', this.boundCreatePointerUp);
+    this.createCaptureEl = canvas;
+    canvas.setPointerCapture(event.pointerId);
   }
 
   private startDrag(event: PointerEvent, positioned: PositionedBlock, mode: DragMode): void {
@@ -568,6 +651,118 @@ export class TimelineChartComponent {
     this.dragCaptureEl = null;
   }
 
+  private onCreatePointerMove(event: PointerEvent): void {
+    const canvas = this.calendarCanvas()?.nativeElement;
+    if (!this.activeCreateDrag() || !canvas) {
+      return;
+    }
+    this.updateCreatePreview(this.clientYToMinutes(event.clientY, canvas));
+  }
+
+  private onCreatePointerUp(event: PointerEvent): void {
+    const preview = this.createPreview();
+    this.teardownCreateListeners();
+
+    if (!this.activeCreateDrag() || !preview) {
+      this.cancelCreateDrag();
+      return;
+    }
+
+    this.activeCreateDrag.set(null);
+    this.createPreview.set(null);
+    this.createCaptureEl?.releasePointerCapture(event.pointerId);
+    this.createCaptureEl = null;
+
+    this.createLabel.set('');
+    this.labelingCreate.set({ ...preview });
+  }
+
+  confirmActivityLabel(event?: Event): void {
+    event?.preventDefault();
+
+    const labeling = this.labelingCreate();
+    if (!labeling) {
+      return;
+    }
+
+    const title = this.createLabel().trim() || 'New activity';
+
+    try {
+      this.activityCreate.emit(
+        buildCreateEventDraft(this.date(), labeling.startMin, labeling.endMin, title)
+      );
+    } catch {
+      this.cancelActivityLabel();
+      return;
+    }
+  }
+
+  cancelActivityLabel(): void {
+    this.skipCreateLabelBlur = true;
+    this.labelingCreate.set(null);
+    this.createLabel.set('');
+  }
+
+  onCreateLabelBlur(): void {
+    if (this.skipCreateLabelBlur) {
+      this.skipCreateLabelBlur = false;
+      return;
+    }
+    this.confirmActivityLabel();
+  }
+
+  onCreateLabelKeydown(event: KeyboardEvent): void {
+    if (event.key === 'Enter') {
+      this.confirmActivityLabel(event);
+    } else if (event.key === 'Escape') {
+      event.preventDefault();
+      this.cancelActivityLabel();
+    }
+  }
+
+  private updateCreatePreview(currentMin: number): void {
+    const drag = this.activeCreateDrag();
+    if (!drag) {
+      return;
+    }
+
+    const clamped = clampDownwardCreateInterval(drag.anchorStartMin, currentMin);
+    this.createPreview.set({
+      previewTopPct: (clamped.startMin / MINUTES_PER_DAY) * 100,
+      previewHeightPct: ((clamped.endMin - clamped.startMin) / MINUTES_PER_DAY) * 100,
+      startMin: clamped.startMin,
+      endMin: clamped.endMin
+    });
+  }
+
+  private clientYToMinutes(clientY: number, canvas: HTMLElement): number {
+    const rect = canvas.getBoundingClientRect();
+    return offsetYToMinutes(clientY - rect.top, rect.height);
+  }
+
+  formatCreatePreviewTimeRange(preview: CreatePreview): string {
+    const fmt = new Intl.DateTimeFormat(undefined, {
+      hour: 'numeric',
+      minute: '2-digit',
+      timeZone: this.timezone()
+    });
+    const viewDate = this.date();
+    return `${fmt.format(new Date(localTimestampFromMinutes(viewDate, preview.startMin)))} - ${fmt.format(new Date(localTimestampFromMinutes(viewDate, preview.endMin)))}`;
+  }
+
+  private teardownCreateListeners(): void {
+    document.removeEventListener('pointermove', this.boundCreatePointerMove);
+    document.removeEventListener('pointerup', this.boundCreatePointerUp);
+    document.removeEventListener('pointercancel', this.boundCreatePointerUp);
+  }
+
+  private cancelCreateDrag(): void {
+    this.teardownCreateListeners();
+    this.activeCreateDrag.set(null);
+    this.createPreview.set(null);
+    this.createCaptureEl = null;
+  }
+
   onWheelZoom(event: WheelEvent): void {
     // macOS trackpad pinch sends wheel events with ctrlKey; plain two-finger scroll scrolls.
     if (!event.ctrlKey) {
@@ -651,4 +846,9 @@ function normalizeWheelDelta(event: WheelEvent): number {
     return event.deltaY * 120;
   }
   return event.deltaY;
+}
+
+function localTimestampFromMinutes(viewDate: string, minutes: number): string {
+  const [year, month, day] = viewDate.split('-').map(Number);
+  return new Date(year, month - 1, day, Math.floor(minutes / 60), minutes % 60, 0, 0).toISOString();
 }

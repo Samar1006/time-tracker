@@ -65,6 +65,8 @@
   position: relative;
   border-left: 1px solid #e5e7eb;
   min-height: 100%;
+  touch-action: none;
+  cursor: crosshair;
 }
 
 .day-calendar__hour-line-wrap,
@@ -160,6 +162,51 @@
   box-shadow: 0 4px 12px rgb(0 0 0 / 18%);
   outline: 2px solid rgb(255 255 255 / 55%);
   outline-offset: -1px;
+}
+
+.day-calendar__event--create-preview {
+  left: 0;
+  right: 0;
+  width: auto;
+  z-index: 4;
+  pointer-events: none;
+  color: var(--color-text);
+  background: color-mix(in srgb, var(--color-primary) 18%, transparent);
+  border: 2px dashed var(--color-primary);
+  border-radius: 6px;
+  box-shadow: none;
+}
+
+.day-calendar__event--create-label {
+  left: 0;
+  right: 0;
+  width: auto;
+  z-index: 5;
+  color: var(--color-text);
+  background: color-mix(in srgb, var(--color-primary) 22%, transparent);
+  border: 2px solid var(--color-primary);
+  border-radius: 6px;
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--color-primary) 20%, transparent);
+  cursor: text;
+}
+
+.day-calendar__create-label-input {
+  width: 100%;
+  min-width: 0;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  font-size: 0.75rem;
+  font-weight: 600;
+  line-height: 1.2;
+  color: inherit;
+  background: transparent;
+  border: none;
+  outline: none;
+
+  &::placeholder {
+    color: var(--color-text-muted);
+  }
 }
 
 .day-calendar__resize {

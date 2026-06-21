@@ -31,8 +31,10 @@
 
         <div
           class="day-calendar__canvas"
+          #calendarCanvas
           role="list"
           aria-label="Activity timeline"
+          (pointerdown)="onCanvasPointerDown($event)"
         >
           @for (guide of hourGuides(); track guide.hour) {
             <div class="day-calendar__hour-line-wrap" [style.top.%]="guide.topPct">
@@ -116,6 +118,46 @@
                 }
               </button>
             }
+          }
+
+          @if (createPreview(); as preview) {
+            <div
+              class="day-calendar__event day-calendar__event--create-preview"
+              role="presentation"
+              aria-hidden="true"
+              [style.top.%]="preview.previewTopPct"
+              [style.height.%]="preview.previewHeightPct"
+            >
+              <span class="day-calendar__event-title">New activity</span>
+              <span class="day-calendar__event-meta">
+                {{ formatCreatePreviewTimeRange(preview) }}
+              </span>
+            </div>
+          }
+
+          @if (labelingCreate(); as labeling) {
+            <div
+              class="day-calendar__event day-calendar__event--create-label"
+              role="listitem"
+              [style.top.%]="labeling.previewTopPct"
+              [style.height.%]="labeling.previewHeightPct"
+              (pointerdown)="$event.stopPropagation()"
+            >
+              <input
+                #createLabelInput
+                class="day-calendar__create-label-input"
+                type="text"
+                [value]="createLabel()"
+                (input)="createLabel.set($any($event.target).value)"
+                (keydown)="onCreateLabelKeydown($event)"
+                (blur)="onCreateLabelBlur()"
+                placeholder="New activity"
+                aria-label="Activity name"
+              />
+              <span class="day-calendar__event-meta">
+                {{ formatCreatePreviewTimeRange(labeling) }}
+              </span>
+            </div>
           }
 
           @if (dragPreview(); as preview) {
