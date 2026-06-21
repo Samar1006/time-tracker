@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseTranscript, toDateISO } from '../src/routes/schedule.js';
+import { parseTranscript, toDateISO, normalizeCategoryContext } from '../src/routes/schedule.js';
 import { sampleTranscripts } from '../src/data/sampleTranscripts.js';
 
 const REF = new Date('2026-06-20T12:00:00.000Z');
@@ -14,7 +14,7 @@ test('parses a time range into a block with start/end', () => {
   assert.equal(blocks[0].end, '10:30 AM');
   assert.equal(blocks[0].durationMin, 90);
   assert.equal(blocks[0].category, 'work');
-  assert.match(blocks[0].activity, /dashboard/i);
+  assert.equal(blocks[0].activity, 'working on the dashboard');
 });
 
 test('derives end time from a spoken duration', () => {
@@ -29,7 +29,7 @@ test('handles am/pm and noon context', () => {
   assert.equal(blocks[0].start, '1:00 PM');
   assert.equal(blocks[0].end, '1:30 PM');
   assert.equal(blocks[0].category, 'communication');
-  assert.match(blocks[0].activity, /email/i);
+  assert.equal(blocks[0].activity, 'answering emails');
 });
 
 test('labels future-tense activities and uses shared am/pm on ranges', () => {
@@ -47,7 +47,7 @@ test('derives end from start plus spoken duration with am/pm', () => {
   assert.equal(blocks[0].start, '6:00 AM');
   assert.equal(blocks[0].end, '9:00 AM');
   assert.equal(blocks[0].durationMin, 180);
-  assert.match(blocks[0].activity, /work out/i);
+  assert.equal(blocks[0].activity, 'working out');
 });
 
 test('parses spoken hour words in from-to ranges and attached am/pm', () => {
@@ -65,7 +65,7 @@ test('parses spoken duration words after attached am/pm start times', () => {
   assert.equal(blocks[0].start, '5:00 AM');
   assert.equal(blocks[0].end, '11:00 AM');
   assert.equal(blocks[0].durationMin, 360);
-  assert.equal(blocks[0].activity, 'run');
+  assert.equal(blocks[0].activity, 'running');
   assert.equal(blocks[0].category, 'break');
 });
 
@@ -76,7 +76,7 @@ test('parses "until" as end time and chains from previous block', () => {
   assert.equal(blocks[1].start, '10:30 AM');
   assert.equal(blocks[1].end, '11:00 AM');
   assert.equal(blocks[1].category, 'communication');
-  assert.match(blocks[1].activity, /standup/i);
+  assert.equal(blocks[1].activity, 'standup');
 });
 
 test('infers times for duration-only segments from prior end', () => {
@@ -84,7 +84,7 @@ test('infers times for duration-only segments from prior end', () => {
   assert.equal(blocks[0].start, null);
   assert.equal(blocks[0].end, null);
   assert.equal(blocks[0].durationMin, 120);
-  assert.match(blocks[0].activity, /debugging/i);
+  assert.equal(blocks[0].activity, 'debugging the api');
   assert.equal(blocks[1].start, null);
   assert.equal(blocks[1].end, null);
   assert.equal(blocks[1].durationMin, 30);
@@ -95,7 +95,7 @@ test('after lunch without clock time gets implicit start and duration', () => {
   assert.equal(blocks[0].start, '1:00 PM');
   assert.equal(blocks[0].end, '1:30 PM');
   assert.equal(blocks[0].durationMin, 30);
-  assert.match(blocks[0].activity, /email/i);
+  assert.equal(blocks[0].activity, 'answering emails');
 });
 
 test('multi-clause morning transcript chains standup and lunch blocks', () => {
@@ -117,7 +117,7 @@ test('full sample workday yields multiple labeled blocks', () => {
   assert.ok(cats.has('work'));
   assert.ok(cats.has('communication'));
   assert.ok(cats.has('entertainment'));
-  assert.ok(blocks.some((b) => b.activity.includes('debugging')));
+  assert.ok(blocks.some((b) => b.activity === 'debugging the api'));
 });
 
 test('transcript with no times still produces categorized blocks', () => {
@@ -133,13 +133,29 @@ test('assigns tomorrow when spoken in the segment', () => {
   assert.equal(blocks[0].date, '2026-06-21');
   assert.equal(blocks[0].dayLabel, 'tomorrow');
   assert.equal(blocks[0].category, 'learning');
-  assert.match(blocks[0].activity, /study/i);
+  assert.equal(blocks[0].activity, 'studying');
 });
 
 test('strips day words from activity labels', () => {
   const { blocks } = parse('I will run today from 3 am to 6 am.');
-  assert.match(blocks[0].activity, /^run$/i);
+  assert.equal(blocks[0].activity, 'running');
   assert.equal(blocks[0].category, 'break');
+});
+
+test('activity labels use present tense', () => {
+  assert.equal(parse('From 9 to 10 I worked on the dashboard.').blocks[0].activity, 'working on the dashboard');
+  assert.equal(parse('I will run today from 3 am to 6 am.').blocks[0].activity, 'running');
+  assert.equal(parse('Yesterday at 5 am to 6 am I worked out.').blocks[0].activity, 'working out');
+});
+
+test('normalizeCategoryContext accepts optional LLM hint array', () => {
+  assert.deepEqual(normalizeCategoryContext(null), []);
+  assert.deepEqual(
+    normalizeCategoryContext([{ label: 'productive', description: 'coding, studying' }]),
+    [{ label: 'productive', description: 'coding, studying' }],
+  );
+  assert.equal(normalizeCategoryContext('bad'), null);
+  assert.equal(normalizeCategoryContext([{ label: '', description: 'x' }]), null);
 });
 
 test('empty transcript returns no blocks', () => {

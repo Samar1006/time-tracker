@@ -287,6 +287,58 @@ function cleanActivity(text) {
   return s;
 }
 
+const LABEL_STOP_WORDS = new Set([
+  'on', 'the', 'a', 'an', 'and', 'for', 'at', 'in', 'to', 'of', 'with',
+  'api', 'dashboard', 'frontend', 'backend', 'emails', 'email', 'slack',
+  'youtube', 'reddit', 'break', 'lunch', 'coffee', 'standup', 'meeting',
+  'documentation', 'tutorial', 'game', 'out',
+]);
+
+const PRESENT_VERB_FORMS = {
+  run: 'running', ran: 'running', walk: 'walking', walked: 'walking',
+  work: 'working', worked: 'working', study: 'studying', studied: 'studying',
+  debug: 'debugging', debugged: 'debugging', code: 'coding', coded: 'coding',
+  answer: 'answering', answered: 'answering', reply: 'replying', replied: 'replying',
+  browse: 'browsing', browsed: 'browsing', watch: 'watching', watched: 'watching',
+  read: 'reading', play: 'playing', played: 'playing', develop: 'developing',
+  have: 'having', had: 'having', take: 'taking', took: 'taking',
+  meet: 'meeting', met: 'meeting', eat: 'eating', ate: 'eating',
+  write: 'writing', wrote: 'writing', build: 'building', built: 'building',
+  review: 'reviewing', reviewed: 'reviewing', deploy: 'deploying', deployed: 'deploying',
+  learn: 'learning', learned: 'learning', learnt: 'learning',
+};
+
+function presentParticiple(word) {
+  const w = word.toLowerCase();
+  if (!w || LABEL_STOP_WORDS.has(w)) return w;
+  if (w.endsWith('ing')) return w;
+  if (PRESENT_VERB_FORMS[w]) return PRESENT_VERB_FORMS[w];
+
+  if (w.endsWith('ied')) return `${w.slice(0, -3)}ying`;
+  if (w.endsWith('ed')) {
+    const stem = w.slice(0, -2);
+    if (stem.endsWith('e') && stem.length > 1) return `${stem}ing`;
+    return `${stem}ing`;
+  }
+
+  if (w.endsWith('e') && w.length > 2 && !w.endsWith('ee')) return `${w.slice(0, -1)}ing`;
+  return w;
+}
+
+// Normalize labels to present-tense / -ing form: "walked" → "walking", "work out" → "working out".
+export function toPresentActivityLabel(text) {
+  if (!text?.trim() || text === '(unspecified)') return text;
+
+  let s = text.toLowerCase().trim();
+  s = s.replace(/\bworked?\s+out\b/g, 'working out');
+  s = s.replace(/\bworked?\s+on\b/g, 'working on');
+  s = s.replace(/\bhad\s+a\s+/g, '');
+  s = s.replace(/\btook\s+a\s+/g, '');
+  s = s.replace(/\bwent\s+for\s+a\s+/g, '');
+  s = s.split(/\s+/).map(presentParticiple).join(' ');
+  return s.replace(/\s+/g, ' ').trim() || text.trim();
+}
+
 // Pull start/end/duration from one segment before cross-segment inference.
 function parseSegmentTimes(seg, contextPm) {
   const normalized = normalizeSpokenTimes(seg);
@@ -407,10 +459,10 @@ export function parseTranscript(transcript, { referenceDate = new Date() } = {})
     contextDate = day.date;
 
     const { start, end, durationMin } = parseSegmentTimes(seg, contextPm);
-    const activity = cleanActivity(seg);
+    const activity = toPresentActivityLabel(cleanActivity(seg));
     if (!activity && start == null && end == null && !durationMin) continue;
 
-    const label = categorizeText(activity || seg);
+    const label = categorizeText(cleanActivity(seg) || seg);
     blocks.push({
       date: day.date,
       dayLabel: day.dayLabel,
@@ -439,7 +491,7 @@ function getAnthropic() {
 }
 
 const CATEGORY_GUIDE = `
-Categories (pick exactly one per block):
+Categories (pick exactly one per block — output MUST use these exact values):
 - work: coding, debugging, building features, PR reviews, design docs, project tasks
 - communication: email, Slack, calls, standups, syncs, 1:1s, team meetings
 - learning: reading docs, courses, tutorials, research, studying
@@ -455,6 +507,35 @@ Examples:
 - "browsed youtube" -> entertainment
 - "coffee break" -> break
 `.trim();
+
+export function normalizeCategoryContext(input) {
+  if (input == null) return [];
+  if (!Array.isArray(input)) return null;
+  if (input.length > 12) return null;
+
+  const out = [];
+  for (const item of input) {
+    if (!item || typeof item !== 'object') return null;
+    const label = typeof item.label === 'string' ? item.label.trim() : '';
+    const description = typeof item.description === 'string' ? item.description.trim() : '';
+    if (!label || !description || label.length > 64 || description.length > 256) return null;
+    out.push({ label, description });
+  }
+  return out;
+}
+
+function buildCategoryContextPrompt(categoryContext) {
+  if (!categoryContext?.length) return '';
+  const lines = categoryContext.map(
+    (c) => `- "${c.label}": ${c.description}`,
+  );
+  return (
+    '\n\nThe user describes activities in their own terms. Use these groupings to choose ' +
+    'the best matching standard category (work, communication, learning, entertainment, ' +
+    'break, or uncategorized) for each block:\n' +
+    lines.join('\n')
+  );
+}
 
 const BLOCKS_SCHEMA = {
   type: 'object',
@@ -490,7 +571,7 @@ function llmBlockConfidence(block) {
   return Math.min(0.95, score);
 }
 
-export async function refineWithLLM(transcript, fallback) {
+export async function refineWithLLM(transcript, fallback, { categoryContext = [] } = {}) {
   const client = getAnthropic();
   if (!client) return fallback;
   try {
@@ -507,9 +588,10 @@ export async function refineWithLLM(transcript, fallback) {
         'Treat spoken number words (one, two, six, etc.) as numeric times and durations. ' +
         'Each block needs a calendar date (YYYY-MM-DD). Infer today/tomorrow/weekday mentions from the transcript. ' +
         'Infer missing start times from the previous activity end when reasonable. ' +
-        'Activity labels should be short, natural, and readable (e.g. "Worked on the dashboard", ' +
-        '"Standup meeting", "Answered emails"). Do not strip verbs or produce fragments.\n\n' +
-        CATEGORY_GUIDE,
+        'Activity labels must use present tense / -ing form (e.g. "walking", "working out", "studying", "answering emails"). ' +
+        'Do not use past tense or future tense in activity labels.\n\n' +
+        CATEGORY_GUIDE +
+        buildCategoryContextPrompt(categoryContext),
       messages: [{ role: 'user', content: transcript }],
       output_config: { format: { type: 'json_schema', schema: BLOCKS_SCHEMA } },
     });
@@ -528,7 +610,7 @@ export async function refineWithLLM(transcript, fallback) {
         start: fmt(startMin),
         end: fmt(endMin),
         durationMin,
-        activity: b.activity || '(unspecified)',
+        activity: toPresentActivityLabel(b.activity || '(unspecified)'),
         category: b.category || 'uncategorized',
         confidence: 0,
         raw: transcript,
@@ -543,7 +625,12 @@ export async function refineWithLLM(transcript, fallback) {
 }
 
 router.post('/parse', async (req, res) => {
-  const { transcript, useLLM = !!process.env.ANTHROPIC_API_KEY, referenceDate } = req.body ?? {};
+  const {
+    transcript,
+    useLLM = !!process.env.ANTHROPIC_API_KEY,
+    referenceDate,
+    categoryContext,
+  } = req.body ?? {};
   if (typeof transcript !== 'string' || !transcript.trim()) {
     return res.status(400).json({ error: 'Body must include a non-empty "transcript" string.' });
   }
@@ -551,8 +638,16 @@ router.post('/parse', async (req, res) => {
   if (Number.isNaN(refDate.getTime())) {
     return res.status(400).json({ error: 'Invalid referenceDate — use ISO 8601 format.' });
   }
+  const normalizedContext = normalizeCategoryContext(categoryContext);
+  if (normalizedContext === null) {
+    return res.status(400).json({
+      error: 'Invalid categoryContext — expected an array of { label, description } objects.',
+    });
+  }
   let result = parseTranscript(transcript, { referenceDate: refDate });
-  if (useLLM) result = await refineWithLLM(transcript, result);
+  if (useLLM) {
+    result = await refineWithLLM(transcript, result, { categoryContext: normalizedContext });
+  }
   res.json(result);
 });
 
