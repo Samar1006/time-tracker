@@ -1,6 +1,6 @@
 .activity-calendar {
   padding: 1.5rem;
-  background: var(--color-white);
+  background: var(--color-surface);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-card);
@@ -62,7 +62,7 @@
   gap: 0.375rem;
   min-height: 56px;
   padding: 0.5rem 0.25rem;
-  background: var(--color-white);
+  background: var(--color-surface);
   border: 1px solid transparent;
   border-radius: var(--radius-sm);
   cursor: pointer;

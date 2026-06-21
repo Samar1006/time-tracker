@@ -8,14 +8,14 @@
   font-size: 0.9375rem;
   font-weight: 500;
   color: var(--color-text);
-  background: var(--color-white);
+  background: var(--color-surface);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
   cursor: pointer;
   transition: background 0.15s ease, border-color 0.15s ease;
 
   &:hover {
-    background: #f9fafb;
+    background: var(--color-app-bg);
     border-color: #d1d5db;
   }
 
@@ -42,7 +42,7 @@
 
   &:hover {
     transform: none;
-    background: var(--color-white);
+    background: var(--color-surface);
     border-color: var(--color-border);
   }
 }
