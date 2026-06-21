@@ -136,31 +136,54 @@ async function blobToBase64(blob: Blob): Promise<string> {
   });
 }
 
-/** "9:00 AM" -> minutes since midnight. Returns null if unparseable. */
+/** "9:00 AM" / "9 AM" -> minutes since midnight. Returns null if unparseable. */
 function parseClock(label: string | null | undefined): number | null {
   if (!label) return null;
-  const m = label.trim().match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
-  if (!m) return null;
-  let h = parseInt(m[1], 10);
-  const min = parseInt(m[2], 10);
-  const period = m[3].toUpperCase();
-  if (period === 'PM' && h < 12) h += 12;
-  if (period === 'AM' && h === 12) h = 0;
-  return h * 60 + min;
+  const trimmed = label.trim();
+  const withMinutes = trimmed.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
+  if (withMinutes) {
+    return toMinutesSinceMidnight(
+      parseInt(withMinutes[1], 10),
+      parseInt(withMinutes[2], 10),
+      withMinutes[3],
+    );
+  }
+  const withoutMinutes = trimmed.match(/^(\d{1,2})\s*(AM|PM)$/i);
+  if (withoutMinutes) {
+    return toMinutesSinceMidnight(parseInt(withoutMinutes[1], 10), 0, withoutMinutes[2]);
+  }
+  return null;
 }
 
-function blockToEvent(block: ScheduleBlock, fallbackDate: string): RawEvent | null {
+function toMinutesSinceMidnight(hour12: number, minute: number, period: string): number {
+  let h = hour12;
+  const p = period.toUpperCase();
+  if (p === 'PM' && h < 12) h += 12;
+  if (p === 'AM' && h === 12) h = 0;
+  return h * 60 + minute;
+}
+
+/** Local wall-clock on `date` (YYYY-MM-DD) -> UTC ISO timestamp for storage. */
+function localTimestamp(date: string, minutesSinceMidnight: number): string {
+  const [year, month, day] = date.split('-').map(Number);
+  const hour = Math.floor(minutesSinceMidnight / 60);
+  const minute = minutesSinceMidnight % 60;
+  return new Date(year, month - 1, day, hour, minute, 0, 0).toISOString();
+}
+
+function blockToEvent(block: ScheduleBlock, viewedDate: string): RawEvent | null {
   const startMin = parseClock(block.start);
   if (startMin == null) return null;
 
-  const date = block.date || fallbackDate;
+  // Bucket under the dashboard day the user is viewing so blocks appear immediately.
+  const storageDate = viewedDate;
   const endMin = parseClock(block.end);
   let durationSec: number;
   if (block.durationMin != null && block.durationMin > 0) {
     durationSec = Math.max(60, Math.round(block.durationMin * 60));
   } else if (endMin != null) {
     let span = endMin - startMin;
-    if (span <= 0 && block.endDate && block.endDate !== date) {
+    if (span <= 0 && block.endDate && block.endDate !== storageDate) {
       span = endMin + 24 * 60 - startMin;
     }
     durationSec = Math.max(60, span * 60);
@@ -168,15 +191,15 @@ function blockToEvent(block: ScheduleBlock, fallbackDate: string): RawEvent | nu
     durationSec = 30 * 60;
   }
 
-  const hh = String(Math.floor(startMin / 60)).padStart(2, '0');
-  const mm = String(startMin % 60).padStart(2, '0');
-  const timestamp = `${date}T${hh}:${mm}:00.000Z`;
-
   return {
-    timestamp,
+    timestamp: localTimestamp(storageDate, startMin),
     type: 'voice',
     title: block.activity?.trim() || 'Activity',
     durationSec,
-    metadata: { category: block.category, sourceClient: 'dashboard-voice' },
+    metadata: {
+      category: block.category,
+      sourceClient: 'dashboard-voice',
+      localDate: storageDate,
+    },
   };
 }
