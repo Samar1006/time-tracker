@@ -1,0 +1,37 @@
+<section class="activity-calendar">
+  <header class="activity-calendar__header">
+    <button type="button" class="activity-calendar__nav" aria-label="Previous month" (click)="prevMonth.emit()">
+      ‹
+    </button>
+    <h2 class="activity-calendar__title">{{ monthLabel() }}</h2>
+    <button type="button" class="activity-calendar__nav" aria-label="Next month" (click)="nextMonth.emit()">
+      ›
+    </button>
+  </header>
+
+  <div class="activity-calendar__weekdays">
+    @for (label of weekdayLabels; track label) {
+      <span class="activity-calendar__weekday">{{ label }}</span>
+    }
+  </div>
+
+  <div class="activity-calendar__grid">
+    @for (cell of cells(); track $index) {
+      @if (cell.date) {
+        <button
+          type="button"
+          class="activity-calendar__day"
+          [class.activity-calendar__day--selected]="cell.isSelected"
+          [class.activity-calendar__day--today]="cell.isToday"
+          [title]="tooltip(cell)"
+          (click)="onSelect(cell)"
+        >
+          <span class="activity-calendar__day-num">{{ cell.day }}</span>
+          <span class="activity-calendar__dot" [class]="intensityClass(cell.totalTrackedSec)"></span>
+        </button>
+      } @else {
+        <span class="activity-calendar__day activity-calendar__day--empty" aria-hidden="true"></span>
+      }
+    }
+  </div>
+</section>

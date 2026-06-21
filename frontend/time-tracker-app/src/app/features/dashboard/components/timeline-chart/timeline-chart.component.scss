@@ -11,7 +11,7 @@
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  margin-bottom: 1.5rem;
+  margin-bottom: 1.25rem;
 }
 
 .timeline-card__title {
@@ -44,57 +44,165 @@
   }
 }
 
-.timeline-chart {
-  display: grid;
-  grid-template-columns: repeat(11, minmax(0, 1fr));
-  gap: 0.75rem;
-  align-items: end;
-  min-height: 220px;
-  padding: 0 0.25rem 0.5rem;
+.hour-calendar {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: #fafafa;
+  overflow: hidden;
 }
 
-.timeline-chart__column {
+.hour-calendar__empty {
+  margin: 0;
+  padding: 2.5rem 1rem;
+  font-size: 0.875rem;
+  color: var(--color-text-muted);
+  text-align: center;
+}
+
+.hour-calendar__head {
+  display: grid;
+  grid-template-columns: 4rem 1fr 3.5rem;
+  gap: 0.75rem;
+  padding: 0.625rem 1rem;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-text-subtle);
+  background: #f3f4f6;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.hour-calendar__head-bar {
+  text-align: center;
+}
+
+.hour-calendar__head-total {
+  text-align: right;
+}
+
+.hour-calendar__rows {
   display: flex;
   flex-direction: column;
-  align-items: center;
+  max-height: 480px;
+  overflow-y: auto;
+}
+
+.hour-calendar__row {
+  display: grid;
+  grid-template-columns: 4rem 1fr 3.5rem;
   gap: 0.75rem;
-  min-width: 0;
-}
+  align-items: center;
+  min-height: 3.25rem;
+  padding: 0.5rem 1rem;
+  background: var(--color-white);
+  border-bottom: 1px solid #f0f1f3;
 
-.timeline-chart__bar {
-  display: flex;
-  flex-direction: column-reverse;
-  justify-content: flex-start;
-  width: 100%;
-  max-width: 48px;
-  height: 180px;
-  gap: 2px;
-}
-
-.timeline-chart__segment {
-  width: 100%;
-  padding: 0;
-  border: none;
-  border-radius: 6px 6px 2px 2px;
-  cursor: pointer;
-  transition: opacity 0.15s ease;
-
-  &:hover {
-    opacity: 0.85;
+  &:last-child {
+    border-bottom: none;
   }
 }
 
-.timeline-chart__empty {
-  display: block;
-  width: 100%;
-  height: 4px;
-  background: #f3f4f6;
-  border-radius: 999px;
+.hour-calendar__row--idle {
+  opacity: 0.55;
 }
 
-.timeline-chart__label {
-  font-size: 0.75rem;
+.hour-calendar__label {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--color-text-muted);
+}
+
+.hour-calendar__bar {
+  display: flex;
+  align-items: stretch;
+  height: 2.5rem;
+  overflow: hidden;
+  background: #f3f4f6;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+}
+
+.hour-calendar__segment {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 0.125rem;
+  min-width: 0;
+  padding: 0.25rem 0.5rem;
+  overflow: hidden;
+  color: #fff;
+  text-align: left;
+  border: none;
+  border-right: 1px solid rgb(255 255 255 / 25%);
+  cursor: pointer;
+  transition: filter 0.15s ease;
+
+  &:last-of-type {
+    border-right: none;
+  }
+
+  &:hover {
+    filter: brightness(1.06);
+    z-index: 1;
+  }
+}
+
+.hour-calendar__segment--narrow {
+  flex-direction: row;
+  align-items: center;
+  justify-content: center;
+  padding: 0.25rem;
+
+  .hour-calendar__segment-label {
+    display: none;
+  }
+
+  .hour-calendar__segment-duration {
+    font-size: 0.625rem;
+  }
+}
+
+.hour-calendar__segment-label {
+  font-size: 0.6875rem;
+  font-weight: 700;
+  line-height: 1.1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.hour-calendar__segment-duration {
+  font-size: 0.625rem;
+  font-weight: 500;
+  opacity: 0.92;
+}
+
+.hour-calendar__unused {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  font-size: 0.625rem;
   color: var(--color-text-subtle);
+  background: repeating-linear-gradient(
+    -45deg,
+    #f9fafb,
+    #f9fafb 6px,
+    #f3f4f6 6px,
+    #f3f4f6 12px
+  );
+}
+
+.hour-calendar__unused--full {
+  flex: 1;
+}
+
+.hour-calendar__total {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  text-align: right;
   white-space: nowrap;
 }
 
@@ -102,7 +210,7 @@
   display: flex;
   flex-wrap: wrap;
   gap: 1rem 1.5rem;
-  margin-top: 1.5rem;
+  margin-top: 1.25rem;
   padding-top: 1.25rem;
   border-top: 1px solid var(--color-border);
 }
@@ -121,9 +229,12 @@
   border-radius: 999px;
 }
 
-.timeline-chart__tooltip {
+.hour-calendar__tooltip {
   position: fixed;
   z-index: 20;
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
   padding: 0.5rem 0.75rem;
   font-size: 0.8125rem;
   color: var(--color-white);
@@ -134,9 +245,16 @@
   white-space: nowrap;
 }
 
+.hour-calendar__tooltip-sub {
+  font-size: 0.75rem;
+  opacity: 0.85;
+}
+
 @media (max-width: 960px) {
-  .timeline-chart {
-    overflow-x: auto;
-    grid-template-columns: repeat(11, 56px);
+  .hour-calendar__head,
+  .hour-calendar__row {
+    grid-template-columns: 3.25rem 1fr 2.75rem;
+    gap: 0.5rem;
+    padding-inline: 0.75rem;
   }
 }

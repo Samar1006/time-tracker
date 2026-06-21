@@ -1,14 +1,32 @@
-import { Component, computed, inject, signal } from '@angular/core';
-import { catchError, of, switchMap, tap } from 'rxjs';
+import { Component, computed, effect, inject, signal } from '@angular/core';
+import {
+  catchError,
+  combineLatest,
+  exhaustMap,
+  finalize,
+  interval,
+  map,
+  of,
+  startWith,
+  switchMap,
+  timeout
+} from 'rxjs';
 import { toObservable, toSignal } from '@angular/core/rxjs-interop';
 
 import { AuthService } from '../../../../core/services/auth.service';
-import { TimelineResponse } from '../../../../core/models/timeline.model';
 import { TimelineService } from '../../../../core/services/timeline.service';
+import { ActivityCalendarComponent } from '../../components/activity-calendar/activity-calendar.component';
 import { DashboardHeaderComponent } from '../../components/dashboard-header/dashboard-header.component';
 import { DashboardSidebarComponent } from '../../components/dashboard-sidebar/dashboard-sidebar.component';
 import { StatCardComponent } from '../../components/stat-card/stat-card.component';
 import { TimelineChartComponent } from '../../components/timeline-chart/timeline-chart.component';
+import {
+  buildCalendarGrid,
+  clampDateToMonth,
+  formatMonthLabel,
+  monthKeyFromDate,
+  shiftMonth
+} from '../../utils/calendar.util';
 import {
   computeDashboardStats,
   formatDisplayDate,
@@ -17,50 +35,120 @@ import {
   toDateInputValue
 } from '../../utils/dashboard-stats.util';
 
+const API_TIMEOUT_MS = 8_000;
+const SUMMARY_TIMEOUT_MS = 15_000;
+const REFRESH_MS = 60_000;
+
 @Component({
   selector: 'app-dashboard',
   imports: [
     DashboardHeaderComponent,
     DashboardSidebarComponent,
     StatCardComponent,
+    ActivityCalendarComponent,
     TimelineChartComponent
   ],
   templateUrl: './dashboard.component.html',
   styleUrl: './dashboard.component.scss'
 })
 export class DashboardComponent {
-  private readonly auth = inject(AuthService);
+  readonly auth = inject(AuthService);
   private readonly timelineService = inject(TimelineService);
 
+  constructor() {
+    effect(() => {
+      const month = monthKeyFromDate(this.selectedDate());
+      if (this.visibleMonth() !== month) {
+        this.visibleMonth.set(month);
+      }
+    });
+  }
+
   readonly selectedDate = signal(toDateInputValue(new Date()));
+  readonly visibleMonth = signal(monthKeyFromDate(toDateInputValue(new Date())));
   readonly loading = signal(true);
   readonly error = signal<string | null>(null);
+  readonly monthTotals = signal(new Map<string, number>());
 
-  private readonly timelineState = toSignal(
-    toObservable(this.selectedDate).pipe(
-      tap(() => {
+  private readonly dashboardState = toSignal(
+    combineLatest([
+      toObservable(this.selectedDate),
+      toObservable(this.auth.user)
+    ]).pipe(
+      switchMap(([date, user]) =>
+        interval(REFRESH_MS).pipe(
+          startWith(0),
+          map(() => ({ date, userId: user?.userId ?? null }))
+        )
+      ),
+      exhaustMap(({ date, userId }) => {
         this.loading.set(true);
         this.error.set(null);
-      }),
-      switchMap((date) => {
-        const user = this.auth.user();
-        if (!user) {
-          return of(null);
+
+        if (!userId) {
+          this.loading.set(false);
+          return of({ timeline: null });
         }
 
-        return this.timelineService.getTimeline(user.userId, date).pipe(
-          catchError(() => {
-            this.error.set('Unable to load timeline. Make sure the server is running on port 4000.');
-            return of(null);
-          })
+        return this.timelineService.getTimeline(userId, date).pipe(
+          timeout(API_TIMEOUT_MS),
+          catchError(() => of(null)),
+          map((timeline) => {
+            if (!timeline) {
+              this.error.set(
+                'Unable to load timeline. Make sure the server is running on port 4000.'
+              );
+            }
+            return { timeline };
+          }),
+          finalize(() => this.loading.set(false))
         );
-      }),
-      tap(() => this.loading.set(false))
+      })
     ),
-    { initialValue: null as TimelineResponse | null }
+    {
+      initialValue: { timeline: null }
+    }
   );
 
-  readonly timeline = computed(() => this.timelineState());
+  /** Keeps month summary fetch alive; totals written to monthTotals signal. */
+  private readonly _monthSummarySubscription = toSignal(
+    combineLatest([
+      toObservable(this.visibleMonth),
+      toObservable(this.auth.user)
+    ]).pipe(
+      switchMap(([month, user]) =>
+        interval(REFRESH_MS).pipe(
+          startWith(0),
+          map(() => ({ month, userId: user?.userId ?? null }))
+        )
+      ),
+      exhaustMap(({ month, userId }) => {
+        if (!userId) {
+          this.monthTotals.set(new Map());
+          return of(new Map<string, number>());
+        }
+
+        return this.timelineService.getMonthSummary(userId, month).pipe(
+          timeout(SUMMARY_TIMEOUT_MS),
+          map((summary) => new Map(summary.days.map((day) => [day.date, day.totalTrackedSec]))),
+          catchError(() => of(new Map<string, number>())),
+          map((totals) => {
+            this.monthTotals.set(totals);
+            return totals;
+          })
+        );
+      })
+    ),
+    { initialValue: new Map<string, number>() }
+  );
+
+  readonly timeline = computed(() => this.dashboardState().timeline);
+  readonly userId = computed(() => this.auth.user()?.userId ?? null);
+  readonly calendarCells = computed(() =>
+    buildCalendarGrid(this.visibleMonth(), this.selectedDate(), this.monthTotals())
+  );
+  readonly calendarMonthLabel = computed(() => formatMonthLabel(this.visibleMonth()));
+
   readonly stats = computed(() => {
     const current = this.timeline();
     if (!current) {
@@ -75,27 +163,40 @@ export class DashboardComponent {
     return computeDashboardStats(current);
   });
 
-  readonly visibleHours = computed(() => {
+  readonly dayHours = computed(() => {
     const current = this.timeline();
-    if (!current) {
-      return getVisibleHours([], 8, 18);
-    }
-
-    return getVisibleHours(current.hours, 8, 18);
+    return getVisibleHours(current?.hours ?? [], 0, 23);
   });
 
   readonly displayDate = computed(() => formatDisplayDate(this.selectedDate()));
 
   previousDay(): void {
-    this.selectedDate.update((date) => shiftDate(date, -1));
+    this.selectDate(shiftDate(this.selectedDate(), -1));
   }
 
   nextDay(): void {
-    this.selectedDate.update((date) => shiftDate(date, 1));
+    this.selectDate(shiftDate(this.selectedDate(), 1));
+  }
+
+  previousMonth(): void {
+    this.syncMonth(shiftMonth(this.visibleMonth(), -1));
+  }
+
+  nextMonth(): void {
+    this.syncMonth(shiftMonth(this.visibleMonth(), 1));
+  }
+
+  private syncMonth(month: string): void {
+    this.visibleMonth.set(month);
+    this.selectedDate.set(clampDateToMonth(month, this.selectedDate()));
+  }
+
+  selectDate(date: string): void {
+    this.selectedDate.set(date);
+    this.visibleMonth.set(monthKeyFromDate(date));
   }
 
   onVoiceLog(): void {
-    // TODO: wire to /api/transcribe and schedule pipeline
     console.log('Voice log clicked');
   }
 }

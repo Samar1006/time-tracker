@@ -1,0 +1,26 @@
+{
+  "manifest_version": 3,
+  "name": "Time Tracker — Background Monitor",
+  "version": "0.1.0",
+  "description": "Tracks active browser tabs and websites, sending activity to the time-tracker API.",
+  "permissions": ["tabs", "storage", "alarms", "idle"],
+  "host_permissions": [
+    "http://localhost:4000/*",
+    "http://127.0.0.1:4000/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["http://localhost:4200/*", "http://127.0.0.1:4200/*"],
+      "js": ["content-bridge.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "options_page": "options.html",
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Time Tracker Monitor"
+  }
+}

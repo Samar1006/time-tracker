@@ -2,7 +2,7 @@
   <header class="timeline-card__header">
     <div>
       <h2 class="timeline-card__title">Today's timeline</h2>
-      <p class="timeline-card__subtitle">Hour-by-hour activity breakdown</p>
+      <p class="timeline-card__subtitle">How each hour was used — by category</p>
     </div>
     <button type="button" class="timeline-card__info" aria-label="Timeline info">
       <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
@@ -13,27 +13,54 @@
     </button>
   </header>
 
-  <div class="timeline-chart">
-    @for (hour of hours(); track hour.hour) {
-      <div class="timeline-chart__column">
-        <div class="timeline-chart__bar">
-          @if (hour.totalTrackedSec === 0) {
-            <span class="timeline-chart__empty"></span>
-          } @else {
-            @for (block of hour.blocks; track block.start + block.activity) {
-              <button
-                type="button"
-                class="timeline-chart__segment"
-                [style.height]="segmentHeight(block.durationSec, hour.totalTrackedSec)"
-                [style.background]="categoryColor(block.category)"
-                (mouseenter)="showTooltip(block, $event)"
-                (mouseleave)="hideTooltip()"
-                [attr.aria-label]="block.activity + ', ' + block.durationSec + ' seconds'"
-              ></button>
-            }
-          }
-        </div>
-        <span class="timeline-chart__label">{{ hourLabel(hour.hour) }}</span>
+  <div class="hour-calendar">
+    @if (!hasActivity()) {
+      <p class="hour-calendar__empty">No activity logged for this day yet.</p>
+    } @else {
+      <div class="hour-calendar__head">
+        <span class="hour-calendar__head-time">Hour</span>
+        <span class="hour-calendar__head-bar">60 min breakdown</span>
+        <span class="hour-calendar__head-total">Tracked</span>
+      </div>
+
+      <div class="hour-calendar__rows">
+        @for (row of hourRows(); track row.hour) {
+          <div class="hour-calendar__row" [class.hour-calendar__row--idle]="row.totalTrackedSec === 0">
+            <span class="hour-calendar__label">{{ row.label }}</span>
+
+            <div class="hour-calendar__bar" role="list" [attr.aria-label]="row.label + ' activity'">
+              @if (row.totalTrackedSec === 0) {
+                <span class="hour-calendar__unused hour-calendar__unused--full">No activity</span>
+              } @else {
+                @for (segment of row.segments; track segment.category) {
+                  <button
+                    type="button"
+                    class="hour-calendar__segment"
+                    role="listitem"
+                    [style.flex-grow]="segment.widthPct"
+                    [style.background]="categoryColor(segment.category)"
+                    [class.hour-calendar__segment--narrow]="segment.widthPct < 18"
+                    (mouseenter)="showSegmentTooltip(segment, $event)"
+                    (mouseleave)="hideTooltip()"
+                    [attr.aria-label]="categoryLabels[segment.category] + ', ' + formatBlockDuration(segment.durationSec)"
+                  >
+                    <span class="hour-calendar__segment-label">{{ categoryLabels[segment.category] }}</span>
+                    <span class="hour-calendar__segment-duration">{{ formatBlockDuration(segment.durationSec) }}</span>
+                  </button>
+                }
+                @if (row.unusedPct > 0) {
+                  <span
+                    class="hour-calendar__unused"
+                    [style.flex-grow]="row.unusedPct"
+                    [attr.aria-label]="unusedLabel(row.unusedPct) + ' unused'"
+                  ></span>
+                }
+              }
+            </div>
+
+            <span class="hour-calendar__total">{{ formatBlockDuration(row.totalTrackedSec) }}</span>
+          </div>
+        }
       </div>
     }
   </div>
@@ -49,11 +76,12 @@
 
   @if (tooltip(); as tip) {
     <div
-      class="timeline-chart__tooltip"
+      class="hour-calendar__tooltip"
       [style.left.px]="tip.x"
       [style.top.px]="tip.y"
     >
-      {{ tip.activity }} · {{ tip.duration }}
+      <strong>{{ tip.category }}</strong> · {{ tip.duration }}
+      <span class="hour-calendar__tooltip-sub">{{ tip.timeRange }} · {{ tip.activity }}</span>
     </div>
   }
 </section>

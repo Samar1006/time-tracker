@@ -22,14 +22,21 @@
   gap: 1rem;
 }
 
+.dashboard-panels {
+  display: grid;
+  grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
+  gap: 1.5rem;
+  align-items: start;
+}
+
 .dashboard-timeline-wrap {
-  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
 }
 
 .dashboard-voice-btn {
-  position: absolute;
-  right: 1.5rem;
-  bottom: 1.5rem;
+  align-self: flex-end;
   display: inline-flex;
   align-items: center;
   gap: 0.5rem;
@@ -73,9 +80,11 @@
     grid-template-columns: 1fr;
   }
 
+  .dashboard-panels {
+    grid-template-columns: 1fr;
+  }
+
   .dashboard-voice-btn {
-    position: static;
     align-self: flex-end;
-    margin-top: 1rem;
   }
 }

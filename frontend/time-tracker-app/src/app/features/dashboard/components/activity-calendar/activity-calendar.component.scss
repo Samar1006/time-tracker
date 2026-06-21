@@ -1,0 +1,117 @@
+.activity-calendar {
+  padding: 1.5rem;
+  background: var(--color-white);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+}
+
+.activity-calendar__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 1rem;
+}
+
+.activity-calendar__title {
+  margin: 0;
+  font-size: 1.125rem;
+  font-weight: 700;
+}
+
+.activity-calendar__nav {
+  width: 36px;
+  height: 36px;
+  font-size: 1.25rem;
+  color: var(--color-text-muted);
+  background: transparent;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+
+  &:hover {
+    background: var(--color-panel-bg);
+    color: var(--color-text);
+  }
+}
+
+.activity-calendar__weekdays {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 0.25rem;
+  margin-bottom: 0.5rem;
+}
+
+.activity-calendar__weekday {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--color-text-subtle);
+  text-align: center;
+}
+
+.activity-calendar__grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 0.375rem;
+}
+
+.activity-calendar__day {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.375rem;
+  min-height: 56px;
+  padding: 0.5rem 0.25rem;
+  background: var(--color-white);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+
+  &:hover {
+    background: var(--color-panel-bg);
+  }
+
+  &--selected {
+    border-color: var(--color-primary);
+    background: var(--color-primary-light);
+  }
+
+  &--today .activity-calendar__day-num {
+    color: var(--color-primary);
+    font-weight: 700;
+  }
+
+  &--empty {
+    cursor: default;
+    background: transparent;
+  }
+}
+
+.activity-calendar__day-num {
+  font-size: 0.875rem;
+  color: var(--color-text);
+}
+
+.activity-calendar__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: #e5e7eb;
+
+  &--low {
+    background: #a5b4fc;
+  }
+
+  &--medium {
+    background: #6366f1;
+  }
+
+  &--high {
+    background: #4338ca;
+  }
+
+  &--none {
+    background: #f3f4f6;
+  }
+}

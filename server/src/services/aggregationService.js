@@ -28,6 +28,11 @@ function inferDurationSec(event) {
   return 300;
 }
 
+/** Fast total for calendar dots — skips hour bucketing. */
+export function sumTrackedSec(events) {
+  return events.reduce((total, event) => total + eventInterval(event).durationSec, 0);
+}
+
 export function mapSource(type) {
   if (type === 'manual') return 'manual';
   if (type === 'voice') return 'voice';
@@ -35,6 +40,7 @@ export function mapSource(type) {
 }
 
 export function activityLabel(event) {
+  if (event.type === 'domain_visit' && event.domain) return event.domain;
   if (event.app && event.domain) return `${event.domain} / ${event.app}`;
   if (event.domain) return event.domain;
   if (event.app) return event.app;
@@ -42,10 +48,111 @@ export function activityLabel(event) {
   return 'Unknown activity';
 }
 
+export function localDateString(ms, timeZone) {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date(ms));
+}
+
+export function localHour(ms, timeZone) {
+  const hour = Number.parseInt(
+    new Intl.DateTimeFormat('en-US', {
+      timeZone,
+      hour: 'numeric',
+      hour12: false,
+    }).format(new Date(ms)),
+    10,
+  );
+  return hour === 24 ? 0 : hour;
+}
+
+function localDayRangeMs(date, timeZone) {
+  const utcMid = Date.parse(`${date}T00:00:00.000Z`);
+  const windowStart = utcMid - 14 * 3600 * MS_PER_SEC;
+  const windowEnd = utcMid + 38 * 3600 * MS_PER_SEC;
+
+  // Binary search — O(log n) instead of ~100k second-by-second Intl calls.
+  let lo = windowStart;
+  let hi = windowEnd;
+  while (lo < hi) {
+    const mid = Math.floor((lo + hi) / 2);
+    if (localDateString(mid, timeZone) < date) lo = mid + 1;
+    else hi = mid;
+  }
+  const start = lo;
+
+  lo = start;
+  hi = start + 28 * 3600 * MS_PER_SEC;
+  while (lo < hi) {
+    const mid = Math.floor((lo + hi) / 2);
+    if (localDateString(mid, timeZone) === date) lo = mid + 1;
+    else hi = mid;
+  }
+  const end = lo;
+
+  return { start, end };
+}
+
+function nextHourBoundaryMs(cursor, clampedEnd, timeZone, hour) {
+  let lo = cursor + 1;
+  let hi = clampedEnd;
+  if (lo >= hi) return clampedEnd;
+  while (lo < hi) {
+    const mid = Math.floor((lo + hi) / 2);
+    if (localHour(mid, timeZone) === hour) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
+}
+
+function splitEventAcrossHoursLocal(event, date, timeZone) {
+  const { startMs, endMs } = eventInterval(event);
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) {
+    return [];
+  }
+
+  const { start: dayStart, end: dayEnd } = localDayRangeMs(date, timeZone);
+  const clampedStart = Math.max(startMs, dayStart);
+  const clampedEnd = Math.min(endMs, dayEnd);
+  if (clampedEnd <= clampedStart) return [];
+
+  const slices = [];
+  let cursor = clampedStart;
+
+  while (cursor < clampedEnd) {
+    const hour = localHour(cursor, timeZone);
+    const sliceEnd = nextHourBoundaryMs(cursor, clampedEnd, timeZone, hour);
+    const durationSec = (sliceEnd - cursor) / MS_PER_SEC;
+    if (durationSec > 0) {
+      slices.push({
+        hour,
+        startMs: cursor,
+        endMs: sliceEnd,
+        durationSec,
+        event,
+      });
+    }
+    cursor = sliceEnd;
+  }
+
+  return slices;
+}
+
 /**
- * Split an interval into per-hour slices for a calendar date (UTC).
+ * Split an interval into per-hour slices for a calendar date.
  */
-export function splitEventAcrossHours(event, date) {
+export function splitEventAcrossHours(event, date, timeZone = 'UTC') {
+  if (timeZone && timeZone !== 'UTC') {
+    return splitEventAcrossHoursLocal(event, date, timeZone);
+  }
+
+  return splitEventAcrossHoursUtc(event, date);
+}
+
+function splitEventAcrossHoursUtc(event, date) {
   const { startMs, endMs } = eventInterval(event);
   if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) {
     return [];
@@ -118,7 +225,7 @@ export function aggregateTimeline(events, date, { userId, timezone = 'UTC' } = {
   const merged = new Map();
 
   for (const event of events) {
-    for (const slice of splitEventAcrossHours(event, date)) {
+    for (const slice of splitEventAcrossHours(event, date, timezone)) {
       const key = mergeKey(slice);
       const existing = merged.get(key);
       if (existing) {
