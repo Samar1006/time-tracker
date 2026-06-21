@@ -130,6 +130,91 @@ export function shiftDate(dateString: string, days: number): string {
   return toDateInputValue(date);
 }
 
+export interface CategoryBreakdownItem {
+  category: ActivityCategory;
+  label: string;
+  seconds: number;
+  percent: number;
+}
+
+export interface TopActivityItem {
+  activity: string;
+  seconds: number;
+}
+
+export function aggregateTimelineSeconds(timelines: TimelineResponse[]): number {
+  return timelines.reduce((sum, timeline) => sum + timeline.totalTrackedSec, 0);
+}
+
+export function computeCategoryBreakdown(timelines: TimelineResponse[]): CategoryBreakdownItem[] {
+  const categoryTotals = new Map<ActivityCategory, number>();
+  let total = 0;
+
+  for (const timeline of timelines) {
+    for (const hour of timeline.hours) {
+      for (const block of hour.blocks) {
+        const next = (categoryTotals.get(block.category) ?? 0) + block.durationSec;
+        categoryTotals.set(block.category, next);
+        total += block.durationSec;
+      }
+    }
+  }
+
+  return (Object.keys(CATEGORY_LABELS) as ActivityCategory[])
+    .map((category) => ({
+      category,
+      label: CATEGORY_LABELS[category],
+      seconds: categoryTotals.get(category) ?? 0,
+      percent: total > 0 ? ((categoryTotals.get(category) ?? 0) / total) * 100 : 0
+    }))
+    .filter((item) => item.seconds > 0)
+    .sort((a, b) => b.seconds - a.seconds);
+}
+
+export function computeTopActivities(
+  timelines: TimelineResponse[],
+  limit = 5
+): TopActivityItem[] {
+  const activityTotals = new Map<string, number>();
+
+  for (const timeline of timelines) {
+    for (const hour of timeline.hours) {
+      for (const block of hour.blocks) {
+        activityTotals.set(
+          block.activity,
+          (activityTotals.get(block.activity) ?? 0) + block.durationSec
+        );
+      }
+    }
+  }
+
+  return [...activityTotals.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, limit)
+    .map(([activity, seconds]) => ({ activity, seconds }));
+}
+
+/** Monday–Sunday dates for the week containing `referenceDate`. */
+export function getWeekDateRange(referenceDate: string): string[] {
+  const date = new Date(`${referenceDate}T12:00:00`);
+  const day = date.getDay();
+  const mondayOffset = day === 0 ? -6 : 1 - day;
+  const monday = new Date(date);
+  monday.setDate(date.getDate() + mondayOffset);
+
+  return Array.from({ length: 7 }, (_, index) => {
+    const d = new Date(monday);
+    d.setDate(monday.getDate() + index);
+    return toDateInputValue(d);
+  });
+}
+
+export function toMonthInputValue(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  return `${year}-${month}`;
+}
+
 export function formatDisplayDate(dateString: string): string {
   const date = new Date(`${dateString}T12:00:00`);
   const today = toDateInputValue(new Date());

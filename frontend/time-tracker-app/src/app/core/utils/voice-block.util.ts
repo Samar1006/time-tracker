@@ -3,6 +3,7 @@
 export interface ScheduleBlock {
   date?: string | null;
   endDate?: string | null;
+  dayLabel?: string | null;
   start?: string | null;
   end?: string | null;
   durationMin?: number | null;
@@ -81,12 +82,35 @@ function totalDurationSec(
   return 30 * 60;
 }
 
+/**
+ * Voice logs should land on the dashboard day the user is viewing unless the
+ * parser explicitly shifted the day (tomorrow, weekday, etc.). LLM refine
+ * sometimes emits placeholder dates (e.g. 2025-01-01) — ignore those.
+ */
+export function resolveVoiceStorageDate(block: ScheduleBlock, viewedDate: string): string {
+  const parserDate = block.date?.trim();
+  if (!parserDate || parserDate === viewedDate) {
+    return viewedDate;
+  }
+  if (block.dayLabel) {
+    return parserDate;
+  }
+  const diffMs = Math.abs(
+    Date.parse(`${parserDate}T12:00:00.000Z`) - Date.parse(`${viewedDate}T12:00:00.000Z`),
+  );
+  const diffDays = diffMs / (24 * 60 * 60 * 1000);
+  if (diffDays <= 14) {
+    return parserDate;
+  }
+  return viewedDate;
+}
+
 /** Convert one parsed block into a single ingest event spanning the full interval. */
 export function blockToEvents(block: ScheduleBlock, fallbackDate: string): VoiceRawEvent[] {
   const startMin = parseClock(block.start);
   if (startMin == null) return [];
 
-  const startDate = block.date || fallbackDate;
+  const startDate = resolveVoiceStorageDate(block, fallbackDate);
   const endMin = parseClock(block.end);
   const endDate =
     block.endDate && block.endDate !== startDate ? block.endDate : startDate;

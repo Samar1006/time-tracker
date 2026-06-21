@@ -78,4 +78,20 @@ describe('voiceBlockConversion', () => {
     assert.equal(events.length, 1);
     assert.equal(events[0].durationSec, 6 * 3600);
   });
+
+  it('anchors LLM placeholder dates to the viewed dashboard day', () => {
+    const events = scheduleBlocksToEvents(
+      [{
+        date: '2025-01-01',
+        start: '9:00 AM',
+        end: '10:00 AM',
+        durationMin: 60,
+        activity: 'coding',
+        category: 'work',
+      }],
+      '2026-06-21',
+    );
+    assert.equal(events.length, 1);
+    assert.equal(events[0].metadata.localDate, '2026-06-21');
+  });
 });

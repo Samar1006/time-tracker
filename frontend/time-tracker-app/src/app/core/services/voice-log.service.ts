@@ -3,6 +3,7 @@ import { HttpClient } from '@angular/common/http';
 import { firstValueFrom } from 'rxjs';
 
 import { environment } from '../../../environments/environment';
+import { CategoryContextService } from './category-context.service';
 import { scheduleBlocksToEvents, type ScheduleBlock } from '../utils/voice-block.util';
 
 export interface VoiceLogResult {
@@ -19,6 +20,7 @@ export interface VoiceLogResult {
 @Injectable({ providedIn: 'root' })
 export class VoiceLogService {
   private readonly http = inject(HttpClient);
+  private readonly categoryContext = inject(CategoryContextService);
 
   readonly recording = signal(false);
   readonly busy = signal(false);
@@ -77,11 +79,13 @@ export class VoiceLogService {
           }
 
           const referenceDate = `${selectedDate}T12:00:00.000Z`;
+          const categoryContext = this.categoryContext.toApiContext();
           const parsed = await firstValueFrom(
             this.http.post<{ blocks: ScheduleBlock[] }>(`${environment.apiUrl}/api/schedule/parse`, {
               transcript,
               referenceDate,
               useLLM: true,
+              ...(categoryContext.length ? { categoryContext } : {}),
             }),
           );
 

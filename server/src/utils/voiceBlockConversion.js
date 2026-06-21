@@ -46,11 +46,30 @@ function totalDurationSec(startDate, endDate, startMin, endMin, durationMin) {
   return 30 * 60;
 }
 
+/** @see frontend voice-block.util.ts resolveVoiceStorageDate */
+export function resolveVoiceStorageDate(block, viewedDate) {
+  const parserDate = block.date?.trim();
+  if (!parserDate || parserDate === viewedDate) {
+    return viewedDate;
+  }
+  if (block.dayLabel) {
+    return parserDate;
+  }
+  const diffMs = Math.abs(
+    Date.parse(`${parserDate}T12:00:00.000Z`) - Date.parse(`${viewedDate}T12:00:00.000Z`),
+  );
+  const diffDays = diffMs / (24 * 60 * 60 * 1000);
+  if (diffDays <= 14) {
+    return parserDate;
+  }
+  return viewedDate;
+}
+
 export function blockToEvents(block, fallbackDate) {
   const startMin = parseClock(block.start);
   if (startMin == null) return [];
 
-  const startDate = block.date || fallbackDate;
+  const startDate = resolveVoiceStorageDate(block, fallbackDate);
   const endMin = parseClock(block.end);
   const endDate =
     block.endDate && block.endDate !== startDate ? block.endDate : startDate;

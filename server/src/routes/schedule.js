@@ -737,9 +737,14 @@ function llmBlockConfidence(block) {
   return Math.min(0.95, score);
 }
 
-export async function refineWithLLM(transcript, fallback, { categoryContext = [] } = {}) {
+export async function refineWithLLM(
+  transcript,
+  fallback,
+  { categoryContext = [], referenceDate = new Date() } = {},
+) {
   const client = getAnthropic();
   if (!client) return fallback;
+  const refIso = toDateISO(referenceDate instanceof Date ? referenceDate : new Date(referenceDate));
   try {
     const response = await client.messages.create({
       model: 'claude-opus-4-8',
@@ -749,6 +754,7 @@ export async function refineWithLLM(transcript, fallback, { categoryContext = []
         'describing how they spent their time. Produce one block per distinct ' +
         'activity segment (split on "then", "after that", "after lunch", etc.). ' +
         'Use 12-hour times with AM/PM (e.g. "9:00 AM", "2:00 PM"); use an empty string for any time you cannot infer. ' +
+        `The reference calendar date ("today") is ${refIso}. Default every block to this date unless the transcript explicitly names another day (tomorrow, a weekday, a month-day, etc.). ` +
         'When someone says "at 6 am for 3 hours", the block runs 6:00 AM to 9:00 AM. ' +
         'When they say "from 2 to 3 am", both times are AM. ' +
         'When they say "from 8 pm to 6 am", set endDate to the next calendar day (end stays 6:00 AM). ' +
@@ -770,7 +776,7 @@ export async function refineWithLLM(transcript, fallback, { categoryContext = []
 
     const blocks = parsed.blocks.map((b) => {
       const block = {
-        date: b.date || toDateISO(new Date()),
+        date: b.date || refIso,
         dayLabel: null,
         start: b.start ? fmt(parseFmt(b.start)) : null,
         end: b.end ? fmt(parseFmt(b.end)) : null,
@@ -812,7 +818,10 @@ router.post('/parse', async (req, res) => {
   }
   let result = parseTranscript(transcript, { referenceDate: refDate });
   if (useLLM) {
-    result = await refineWithLLM(transcript, result, { categoryContext: normalizedContext });
+    result = await refineWithLLM(transcript, result, {
+      categoryContext: normalizedContext,
+      referenceDate: refDate,
+    });
   }
   res.json(result);
 });
