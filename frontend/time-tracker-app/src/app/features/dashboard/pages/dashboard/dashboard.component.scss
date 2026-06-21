@@ -31,7 +31,7 @@
   background: var(--color-primary);
   border: none;
   border-radius: 999px;
-  box-shadow: 0 8px 24px rgba(99, 102, 241, 0.35);
+  box-shadow: 0 8px 24px rgba(29, 78, 216, 0.35);
   cursor: pointer;
   transition: background 0.15s ease, transform 0.15s ease;
 
@@ -85,7 +85,7 @@
   padding: 2rem;
   text-align: center;
   color: var(--color-text-muted);
-  background: var(--color-white);
+  background: var(--color-surface);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
 

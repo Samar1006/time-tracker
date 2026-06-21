@@ -1,7 +1,7 @@
 .auth-layout {
   display: flex;
   min-height: 100dvh;
-  background: var(--color-white);
+  background: var(--color-surface);
 }
 
 .auth-layout__hero {
@@ -9,42 +9,58 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  background: var(--color-panel-bg);
   padding: 3rem 4rem;
+  background:
+    radial-gradient(700px 500px at 50% 0%, rgba(29, 78, 216, 0.35), transparent 60%),
+    linear-gradient(160deg, #1f2a44, #0b1020);
 }
 
 .auth-layout__hero-content {
-  max-width: 480px;
+  max-width: 420px;
   display: flex;
   flex-direction: column;
-  gap: 1.5rem;
+  align-items: center;
+  text-align: center;
+  gap: 1.25rem;
+}
+
+.auth-layout__avatar-ring {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 220px;
+  height: 220px;
+  border-radius: 999px;
+  background: radial-gradient(circle at 50% 35%, rgba(56, 189, 248, 0.35), rgba(29, 78, 216, 0.15));
+  box-shadow:
+    0 24px 60px rgba(29, 78, 216, 0.45),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.12);
+}
+
+.auth-layout__avatar {
+  width: 188px;
+  height: 188px;
+  border-radius: 999px;
+  object-fit: cover;
 }
 
 .auth-layout__headline {
   margin: 0;
-  font-size: 2rem;
+  font-size: 1.875rem;
   font-weight: 700;
   line-height: 1.3;
-  color: var(--color-text);
+  color: #ffffff;
 }
 
 .auth-layout__highlight {
-  color: var(--color-primary);
+  color: #8ab4ff;
 }
 
 .auth-layout__subtext {
   margin: 0;
   font-size: 1rem;
   line-height: 1.6;
-  color: var(--color-text-muted);
-}
-
-.auth-layout__illustration {
-  width: 100%;
-  max-width: 420px;
-  height: auto;
-  margin-top: 1rem;
-  object-fit: contain;
+  color: rgba(255, 255, 255, 0.72);
 }
 
 .auth-layout__form-panel {
@@ -53,7 +69,7 @@
   align-items: center;
   justify-content: center;
   padding: 3rem 4rem;
-  background: var(--color-white);
+  background: var(--color-surface);
 }
 
 @media (max-width: 960px) {
@@ -62,17 +78,17 @@
   }
 
   .auth-layout__hero {
-    padding: 2rem 1.5rem;
+    padding: 2.5rem 1.5rem;
   }
 
-  .auth-layout__hero-content {
-    max-width: 100%;
-    text-align: center;
-    align-items: center;
+  .auth-layout__avatar-ring {
+    width: 160px;
+    height: 160px;
   }
 
-  .auth-layout__illustration {
-    max-width: 320px;
+  .auth-layout__avatar {
+    width: 136px;
+    height: 136px;
   }
 
   .auth-layout__form-panel {

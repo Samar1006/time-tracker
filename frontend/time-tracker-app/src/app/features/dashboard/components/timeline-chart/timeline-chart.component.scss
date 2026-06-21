@@ -1,7 +1,7 @@
 .timeline-card {
   position: relative;
   padding: 1.5rem;
-  background: var(--color-white);
+  background: var(--color-surface);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-card);
@@ -22,7 +22,7 @@
 .day-calendar {
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
-  background: var(--color-white);
+  background: var(--color-surface);
   overflow: hidden;
 }
 

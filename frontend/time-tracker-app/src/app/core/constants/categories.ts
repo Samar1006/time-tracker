@@ -1,8 +1,8 @@
 import { ActivityCategory } from '../models/timeline.model';
 
 export const CATEGORY_COLORS: Record<ActivityCategory, string> = {
-  work: '#6366f1',
-  communication: '#3b82f6',
+  work: '#1d4ed8',
+  communication: '#38bdf8',
   learning: '#22c55e',
   entertainment: '#ec4899',
   break: '#f97316',
