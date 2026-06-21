@@ -46,6 +46,25 @@ test('derives end from start plus spoken duration with am/pm', () => {
   assert.match(blocks[0].activity, /work out/i);
 });
 
+test('parses spoken hour words in from-to ranges and attached am/pm', () => {
+  const { blocks } = parseTranscript('I will be running from two to 3AM.');
+  assert.equal(blocks.length, 1);
+  assert.equal(blocks[0].start, '2:00 AM');
+  assert.equal(blocks[0].end, '3:00 AM');
+  assert.equal(blocks[0].durationMin, 60);
+  assert.equal(blocks[0].activity, 'running');
+  assert.equal(blocks[0].category, 'break');
+});
+
+test('parses spoken duration words after attached am/pm start times', () => {
+  const { blocks } = parseTranscript("At 5AM, I'll run for six hours.");
+  assert.equal(blocks[0].start, '5:00 AM');
+  assert.equal(blocks[0].end, '11:00 AM');
+  assert.equal(blocks[0].durationMin, 360);
+  assert.equal(blocks[0].activity, 'run');
+  assert.equal(blocks[0].category, 'break');
+});
+
 test('parses "until" as end time and chains from previous block', () => {
   const { blocks } = parseTranscript(sampleTranscripts[3].text);
   assert.equal(blocks.length, 2);

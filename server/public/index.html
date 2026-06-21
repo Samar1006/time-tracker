@@ -182,10 +182,12 @@
     empty.textContent = "";
     out.innerHTML = blocks.map((b) => {
       const color = CAT_COLORS[b.category] || CAT_COLORS.uncategorized;
-      const start = b.start || "—", end = b.end ? "–" + b.end : "";
+      const timeRange = b.start && b.end
+        ? `${b.start} – ${b.end}`
+        : b.start || b.end || "—";
       const dur = b.durationMin ? `${b.durationMin} min` : "";
       return `<div class="block" style="border-left-color:${color}">
-        <div class="time">${start}<small>${end} ${dur}</small></div>
+        <div class="time">${timeRange}${dur ? `<small> (${dur})</small>` : ""}</div>
         <div class="activity">${escapeHtml(b.activity)}</div>
         <div class="cat" style="background:${color}22;color:${color}">${b.category}</div>
       </div>`;

@@ -37,7 +37,7 @@ export const CATEGORIES = {
   },
   break: {
     keywords: ['break', 'lunch', 'coffee', 'rest', 'walk', 'snack', 'gym',
-      'workout', 'work out', 'running', 'jogging', 'exercise', 'nap', 'relax'],
+      'workout', 'work out', 'running', 'run', 'jogging', 'exercise', 'nap', 'relax'],
     domains: [],
   },
 };

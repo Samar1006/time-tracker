@@ -16,36 +16,71 @@ const router = express.Router();
 
 // --- time parsing helpers --------------------------------------------------
 
-// Matches "9", "9am", "10:30", "1 pm", "13:00", "noon", "midnight".
-const TIME_RE =
-  /\b(?:(noon|midnight)|(\d{1,2})(?::(\d{2}))?\s*(am|pm)?)\b/i;
-// Global variant for stripping every time mention out of activity text.
-const TIME_RE_G = new RegExp(TIME_RE.source, 'gi');
+// Matches "9", "9am", "10:30", "1 pm", "noon", "midnight", and attached "3AM".
+const TIME_TOKEN = String.raw`(?:(?:noon|midnight)|(?:\d{1,2}:\d{2}|\d{1,2})(?:\s*(?:am|pm)|(?:am|pm))?)`;
+const TIME_RE = new RegExp(`\\b${TIME_TOKEN}\\b`, 'i');
+const TIME_RE_G = new RegExp(`\\b${TIME_TOKEN}\\b`, 'gi');
+
+const FROM_TO_TIME = String.raw`(?:(?:noon|midnight)|(?:\d{1,2}:\d{2}|\d{1,2})(?:\s*(?:am|pm)|(?:am|pm))?)`;
 
 const DURATION_WORDS = {
   one: 1, two: 2, three: 3, four: 4, five: 5, six: 6,
+  seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12,
   half: 0.5, quarter: 0.25,
 };
 
-// Convert a regex match into minutes-since-midnight, or null.
-// `contextPm` nudges bare hours (e.g. "from 1 to 3" after "lunch") toward PM.
+const HOUR_WORD_RE = 'one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve';
+
+function wordToHour(word) {
+  return DURATION_WORDS[String(word).toLowerCase()] ?? null;
+}
+
+// Normalize spoken clocks: "5AM" -> "5 am", "from two to three am" -> "from 2 to 3 am".
+function normalizeSpokenTimes(text) {
+  let s = text;
+  s = s.replace(/\b(\d{1,2})(?::(\d{2}))?(am|pm)\b/gi, (_, h, min, ap) =>
+    min ? `${h}:${min} ${ap}` : `${h} ${ap}`,
+  );
+  s = s.replace(
+    new RegExp(`\\b(${HOUR_WORD_RE})\\s*(am|pm)\\b`, 'gi'),
+    (_, w, ap) => `${wordToHour(w)} ${ap}`,
+  );
+  s = s.replace(
+    new RegExp(
+      `\\bfrom\\s+(${HOUR_WORD_RE}|\\d{1,2}:\\d{2}|\\d{1,2})\\s+to\\s+(${HOUR_WORD_RE}|\\d{1,2}:\\d{2}|\\d{1,2})(?:\\s*(?:am|pm)|(?:am|pm))?\\b`,
+      'gi',
+    ),
+    (_, t1, t2, ap) => {
+      const h1 = wordToHour(t1) ?? t1;
+      const h2 = wordToHour(t2) ?? t2;
+      return `from ${h1} to ${h2}${ap ? ` ${ap}` : ''}`;
+    },
+  );
+  s = s.replace(
+    new RegExp(`\\bat\\s+(${HOUR_WORD_RE})\\b`, 'gi'),
+    (_, w) => `at ${wordToHour(w)}`,
+  );
+  return s;
+}
+
 function toMinutes(match, contextPm = false) {
   if (!match) return null;
-  const [, word, hourStr, minStr, ampm] = match;
-  if (word) return word.toLowerCase() === 'noon' ? 12 * 60 : 0;
+  const token = match[0].toLowerCase().replace(/\s+/g, '');
+  if (token === 'noon') return 12 * 60;
+  if (token === 'midnight') return 0;
 
-  let hour = parseInt(hourStr, 10);
-  const min = minStr ? parseInt(minStr, 10) : 0;
+  const parsed = token.match(/^(?:(\d{1,2})(?::(\d{2}))?(am|pm)?|(\d{1,2})(am|pm))$/i);
+  if (!parsed) return null;
+
+  let hour = parseInt(parsed[1] ?? parsed[4], 10);
+  const min = parsed[2] ? parseInt(parsed[2], 10) : 0;
+  const ampm = (parsed[3] ?? parsed[5] ?? '').toLowerCase();
   if (Number.isNaN(hour) || hour > 23 || min > 59) return null;
 
-  if (ampm) {
-    const isPm = ampm.toLowerCase() === 'pm';
-    if (isPm && hour < 12) hour += 12;
-    if (!isPm && hour === 12) hour = 0;
-  } else if (contextPm && hour < 12 && hour >= 1 && hour <= 7) {
-    // afternoon-ish bare hours -> PM (1..7 -> 13..19)
-    hour += 12;
-  }
+  if (ampm === 'pm' && hour < 12) hour += 12;
+  if (ampm === 'am' && hour === 12) hour = 0;
+  else if (!ampm && contextPm && hour < 12 && hour >= 1 && hour <= 7) hour += 12;
+
   return hour * 60 + min;
 }
 
@@ -78,34 +113,29 @@ function parseFmt(label) {
 function isDurationToken(seg, index, length) {
   const before = seg.slice(Math.max(0, index - 5), index).toLowerCase();
   const after = seg.slice(index + length, index + length + 12).toLowerCase();
+  const token = seg.slice(index, index + length).toLowerCase();
   if (/\bfor\s$/.test(before)) return true;
   if (/^\s*(?:hours?|hrs?|mins?|minutes?)\b/.test(after)) return true;
+  if (wordToHour(token) != null && /^\s*(?:hours?|hrs?|mins?|minutes?)\b/.test(after)) return true;
   return false;
 }
 
 // "from 2 to 3 am" — share am/pm across both ends of the range.
-function buildTimeMatch(token, hour, min, ampm) {
-  if (token && /^(noon|midnight)$/i.test(token)) {
-    return [token, token, undefined, undefined, ampm];
-  }
-  return ['', undefined, hour ?? token, min, ampm];
-}
-
 function parseFromToRange(seg, contextPm) {
-  const m = seg.match(
-    /\bfrom\s+((?:noon|midnight)|(\d{1,2})(?::(\d{2}))?\s*(am|pm)?)\s+to\s+((?:noon|midnight)|(\d{1,2})(?::(\d{2}))?\s*(am|pm)?)\b/i,
+  const normalized = normalizeSpokenTimes(seg);
+  const m = normalized.match(
+    new RegExp(`\\bfrom\\s+(${FROM_TO_TIME})\\s+to\\s+(${FROM_TO_TIME})\\b`, 'i'),
   );
   if (!m) return null;
 
-  const sharedAmpm = (m[4] || m[8] || '').toLowerCase();
-  const start = toMinutes(
-    buildTimeMatch(m[1], m[2], m[3], sharedAmpm || m[4]),
-    contextPm && !sharedAmpm,
-  );
-  const end = toMinutes(
-    buildTimeMatch(m[5], m[6], m[7], sharedAmpm || m[8]),
-    contextPm && !sharedAmpm,
-  );
+  const endToken = m[2];
+  const endAmpm = endToken.match(/(?:am|pm)/i)?.[0]?.toLowerCase();
+  const startToken = endAmpm && !/(?:am|pm)/i.test(m[1])
+    ? `${m[1]} ${endAmpm}`
+    : m[1];
+
+  const start = toMinutes([startToken], contextPm && !endAmpm);
+  const end = toMinutes([endToken], contextPm && !endAmpm);
   if (start == null || end == null) return null;
 
   return {
@@ -122,7 +152,9 @@ function extractDurationMinutes(text) {
 
   const durH = lower.match(/(\d+(?:\.\d+)?)\s*hours?/);
   const durM = lower.match(/(\d+)\s*(?:mins?|minutes?)/);
-  const wordH = lower.match(/\b(one|two|three|four|five|six|half|quarter)\s*(?:an?\s+)?hours?\b/);
+  const wordH = lower.match(
+    new RegExp(`\\b(${HOUR_WORD_RE}|half|quarter)\\s*(?:an?\\s+)?hours?\\b`),
+  );
   const wordM = lower.match(/\b(one|two|three|four|five|ten|fifteen|twenty|thirty|forty|five|forty-five|forty five)\s*(?:mins?|minutes?)\b/);
   const anHour = /\b(?:an?\s+)?hour\b/.test(lower);
 
@@ -152,25 +184,39 @@ function segment(transcript) {
 }
 
 function marksAfternoon(text) {
-  return /\b(lunch|afternoon|evening)\b|\d\s*(?:am|pm)\b|\b\d{1,2}(?:am|pm)\b/i.test(text);
+  return /\b(lunch|afternoon|evening)\b|\d\s*(?:am|pm)\b|\b\d{1,2}(?:am|pm)\b|\b(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\s*(?:am|pm)\b/i.test(
+    normalizeSpokenTimes(text),
+  );
 }
 
 // Strip time/duration noise but keep readable activity phrases.
 function cleanActivity(text) {
-  let s = text
+  let s = normalizeSpokenTimes(text);
+  s = s.replace(
+    new RegExp(
+      `\\bfrom\\s+(?:${HOUR_WORD_RE}|\\d{1,2}:\\d{2}|\\d{1,2})\\s+to\\s+(?:${HOUR_WORD_RE}|\\d{1,2}:\\d{2}|\\d{1,2})(?:\\s*(?:am|pm)|(?:am|pm))?\\b`,
+      'gi',
+    ),
+    ' ',
+  );
+  s = s
     .replace(
-      /\b(?:for\s+)?(?:(?:\d+(?:\.\d+)?|one|two|three|four|five|six|seven|eight|nine|ten|fifteen|twenty|thirty|forty|forty-five|forty five|half|quarter)\s*(?:hours?|hrs?|mins?|minutes?)|(?:an?\s+hours?))\b/gi,
+      new RegExp(
+        `\\b(?:for\\s+)?(?:(?:\\d+(?:\\.\\d+)?|${HOUR_WORD_RE}|half|quarter|fifteen|twenty|thirty|forty|forty-five|forty five)\\s*(?:hours?|hrs?|mins?|minutes?)|(?:an?\\s+hours?))\\b`,
+        'gi',
+      ),
       ' ',
     )
     .replace(TIME_RE_G, '')
     .replace(/\b(?:until|till|from|to|around|about|at)\b/gi, ' ')
+    .replace(/\b(?:i'll|i'll|i\s+will\s+be|i\s+will|will\s+be|will|going\s+to|gonna)\s+/gi, ' ')
     .replace(/\b(?:i\s+)?spent\s+/gi, '')
     .replace(/\b(am|pm)\b/gi, '')
+    .replace(/\b(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\b/gi, ' ')
     .replace(/\s+/g, ' ')
     .trim();
 
   s = s.replace(/^(?:then|after that|after lunch|next|afterwards)\s+/i, '');
-  s = s.replace(/^(?:i\s+)?(?:will\s+be|will|going\s+to|gonna|'ll)\s+/i, '');
   s = s.replace(/^i\s+/i, '');
   s = s.replace(/^[\s,–-]+|[\s,–-]+$/g, '').trim();
   return s;
@@ -178,21 +224,22 @@ function cleanActivity(text) {
 
 // Pull start/end/duration from one segment before cross-segment inference.
 function parseSegmentTimes(seg, contextPm) {
-  const range = parseFromToRange(seg, contextPm);
+  const normalized = normalizeSpokenTimes(seg);
+  const range = parseFromToRange(normalized, contextPm);
   if (range) return range;
 
   // "until 11" / "till 1pm" — end time only
-  const untilMatch = seg.match(
-    /\b(?:until|till)\s+(?:(noon|midnight)|(\d{1,2})(?::(\d{2}))?\s*(am|pm)?)\b/i,
+  const untilMatch = normalized.match(
+    new RegExp(`\\b(?:until|till)\\s+(${FROM_TO_TIME})\\b`, 'i'),
   );
   if (untilMatch) {
-    const end = toMinutes(untilMatch, contextPm);
+    const end = toMinutes([untilMatch[1]], contextPm);
     return { start: null, end, durationMin: null };
   }
 
   // Collect up to two clock times; skip numbers that belong to durations.
   const times = [];
-  let rest = seg;
+  let rest = normalized;
   let searchFrom = 0;
   while (times.length < 2) {
     const timeRe = new RegExp(TIME_RE.source, 'i');
@@ -200,7 +247,7 @@ function parseSegmentTimes(seg, contextPm) {
     const m = timeRe.exec(slice);
     if (!m) break;
     const absIndex = searchFrom + m.index;
-    if (isDurationToken(seg, absIndex, m[0].length)) {
+    if (isDurationToken(normalized, absIndex, m[0].length)) {
       searchFrom = absIndex + m[0].length;
       continue;
     }
@@ -210,7 +257,7 @@ function parseSegmentTimes(seg, contextPm) {
 
   let start = times[0] ?? null;
   let end = times[1] ?? null;
-  const durationMin = extractDurationMinutes(seg);
+  const durationMin = extractDurationMinutes(normalized);
 
   // "from 9 to 10" already captured; derive end from duration when only start known
   if (start != null && end == null && durationMin != null) {
@@ -325,7 +372,7 @@ Categories (pick exactly one per block):
 - communication: email, Slack, calls, standups, syncs, 1:1s, team meetings
 - learning: reading docs, courses, tutorials, research, studying
 - entertainment: YouTube, games, social media, music, casual browsing
-- break: lunch, coffee, walk, gym, rest, nap
+- break: lunch, coffee, walk, gym, rest, nap, running, jogging, exercise, workout
 - uncategorized: only when nothing else fits
 
 Examples:
@@ -384,6 +431,7 @@ export async function refineWithLLM(transcript, fallback) {
         'Use 12-hour times with AM/PM (e.g. "9:00 AM", "2:00 PM"); use an empty string for any time you cannot infer. ' +
         'When someone says "at 6 am for 3 hours", the block runs 6:00 AM to 9:00 AM. ' +
         'When they say "from 2 to 3 am", both times are AM. ' +
+        'Treat spoken number words (one, two, six, etc.) as numeric times and durations. ' +
         'Infer missing start times from the previous activity end when reasonable. ' +
         'Activity labels should be short, natural, and readable (e.g. "Worked on the dashboard", ' +
         '"Standup meeting", "Answered emails"). Do not strip verbs or produce fragments.\n\n' +
