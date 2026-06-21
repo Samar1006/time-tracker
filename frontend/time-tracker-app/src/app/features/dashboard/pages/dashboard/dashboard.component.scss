@@ -53,6 +53,13 @@
   text-align: right;
 }
 
+.dashboard-voice-live {
+  font-size: 0.9375rem;
+  color: var(--color-text);
+  font-style: italic;
+  min-height: 1.25rem;
+}
+
 .dashboard-voice-error {
   color: #dc2626;
 }

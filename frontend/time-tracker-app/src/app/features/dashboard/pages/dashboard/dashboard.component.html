@@ -45,7 +45,15 @@
           Log with voice
         }
       </button>
-      @if (lastHeard()) {
+      @if (voiceLog.recording()) {
+        <p class="dashboard-voice-heard dashboard-voice-live" aria-live="polite">
+          @if (voiceLog.liveTranscript()) {
+            {{ voiceLog.liveTranscript() }}
+          } @else {
+            Listening…
+          }
+        </p>
+      } @else if (lastHeard()) {
         <p class="dashboard-voice-heard">Heard: “{{ lastHeard() }}”</p>
       }
       @if (voiceError()) {
