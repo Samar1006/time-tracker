@@ -54,11 +54,11 @@ async function testRedisUrl(url, label) {
       new Promise((_, reject) => setTimeout(() => reject(new Error('connect timeout 10s')), 10000)),
     ]);
     const pong = await client.ping();
-    await client.destroy();
+    await client.quit();
     return { ok: true, label, ms: Date.now() - started, message: `PING → ${pong}` };
   } catch (err) {
     try {
-      await client.destroy();
+      if (client.isOpen) await client.quit();
     } catch {
       /* ignore */
     }

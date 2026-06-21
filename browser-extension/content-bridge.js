@@ -1,32 +1,31 @@
 const USER_ID_ATTR = 'data-tracker-user-id';
 const EXTENSION_ATTR = 'data-tracker-extension';
+const TOKEN_KEY = 'authToken';
+const DASHBOARD_TOKEN_KEY = 'time-tracker-token';
 
 function markExtensionReady() {
   document.documentElement.setAttribute(EXTENSION_ATTR, 'ready');
 }
 
-function syncUserIdFromPage() {
+function syncSessionFromPage() {
+  const token = sessionStorage.getItem(DASHBOARD_TOKEN_KEY)?.trim();
+  if (token) {
+    chrome.storage.local.set({ [TOKEN_KEY]: token });
+  }
+
   const el = document.querySelector(`[${USER_ID_ATTR}]`);
   const userId = el?.getAttribute(USER_ID_ATTR)?.trim();
-  if (!userId) return;
+  if (userId) {
+    chrome.storage.sync.set({ enabled: true });
+  }
 
-  chrome.storage.sync.get(['userId'], (current) => {
-    if (current.userId === userId) {
-      markExtensionReady();
-      return;
-    }
-    chrome.storage.sync.set({ userId, enabled: true }, () => {
-      console.info('[time-tracker] synced userId from dashboard:', userId);
-      markExtensionReady();
-    });
-  });
+  markExtensionReady();
 }
 
-markExtensionReady();
-syncUserIdFromPage();
+syncSessionFromPage();
 
 const observer = new MutationObserver(() => {
-  syncUserIdFromPage();
+  syncSessionFromPage();
 });
 observer.observe(document.documentElement, {
   attributes: true,
@@ -34,7 +33,12 @@ observer.observe(document.documentElement, {
   attributeFilter: [USER_ID_ATTR],
 });
 
-// Allow the dashboard page to ping extension status.
+window.addEventListener('storage', (event) => {
+  if (event.key === DASHBOARD_TOKEN_KEY && event.newValue) {
+    chrome.storage.local.set({ [TOKEN_KEY]: event.newValue });
+  }
+});
+
 window.addEventListener('message', (event) => {
   if (event.source !== window || event.data?.type !== 'time-tracker-ping') return;
   chrome.runtime.sendMessage({ type: 'get-status' }, (response) => {

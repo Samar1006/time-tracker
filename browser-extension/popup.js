@@ -1,9 +1,9 @@
 async function init() {
   const config = await chrome.storage.sync.get({
     enabled: true,
-    userId: 'user-demo-1',
     apiBaseUrl: 'http://localhost:4000',
   });
+  const { authToken } = await chrome.storage.local.get('authToken');
   const stored = await chrome.storage.local.get('pendingEvents');
   const pendingCount = (stored.pendingEvents ?? []).length;
 
@@ -11,11 +11,11 @@ async function init() {
   const domain = document.getElementById('domain');
   const queue = document.getElementById('queue');
 
-  if (!config.userId) {
-    status.textContent = 'Set your User ID in extension settings.';
+  if (!authToken) {
+    status.textContent = 'Log in via extension settings or the dashboard.';
     status.classList.remove('status--on');
   } else if (config.enabled) {
-    status.textContent = `Tracking as ${config.userId}`;
+    status.textContent = 'Tracking enabled';
     status.classList.add('status--on');
   } else {
     status.textContent = 'Tracking paused';

@@ -18,6 +18,8 @@
         font-size: 0.875rem;
       }
       input[type='text'],
+      input[type='email'],
+      input[type='password'],
       input[type='url'] {
         width: 100%;
         margin-top: 0.375rem;
@@ -46,26 +48,35 @@
         font-size: 0.875rem;
         color: #059669;
       }
+      #status.error {
+        color: #dc2626;
+      }
     </style>
   </head>
   <body>
     <h1>Background Monitor</h1>
-    <p>Connect this extension to your time-tracker account. Use the user ID from your dashboard session (or <code>user-demo-1</code> for the demo account).</p>
+    <p>
+      Log in with your time-tracker account, or open the dashboard at
+      <code>:4200</code> while logged in — the extension syncs your session automatically.
+    </p>
 
     <label>
       <input type="checkbox" id="enabled" checked />
       Enable tracking
     </label>
 
-    <label for="userId">User ID</label>
-    <input id="userId" type="text" placeholder="user-demo-1" />
-    <p class="hint">Must match the logged-in account's ID for timeline data to appear on your dashboard.</p>
+    <label for="email">Email</label>
+    <input id="email" type="email" placeholder="demo@timetracker.test" />
+
+    <label for="password">Password</label>
+    <input id="password" type="password" placeholder="Demo1234!" />
 
     <label for="apiBaseUrl">API base URL</label>
     <input id="apiBaseUrl" type="url" value="http://localhost:4000" />
+    <p class="hint">Use <code>http://&lt;LAN-IP&gt;:4000</code> when testing from another machine on the same Wi‑Fi.</p>
 
-    <button type="button" id="save">Save</button>
-    <p id="status" hidden>Saved.</p>
+    <button type="button" id="login">Log in &amp; save</button>
+    <p id="status" hidden></p>
 
     <script src="options.js"></script>
   </body>

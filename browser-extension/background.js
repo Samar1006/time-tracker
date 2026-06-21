@@ -1,5 +1,5 @@
 const DEFAULT_API = 'http://localhost:4000';
-const DEFAULT_USER_ID = 'user-demo-1';
+const TOKEN_KEY = 'authToken';
 const MIN_DURATION_SEC = 3;
 const FLUSH_ALARM = 'flush-session';
 const QUEUE_KEY = 'pendingEvents';
@@ -34,20 +34,14 @@ function localDateKey(ms) {
 
 async function getConfig() {
   return chrome.storage.sync.get({
-    userId: DEFAULT_USER_ID,
     apiBaseUrl: DEFAULT_API,
     enabled: true,
   });
 }
 
-async function ensureDefaults() {
-  const config = await getConfig();
-  const updates = {};
-  if (!config.userId) updates.userId = DEFAULT_USER_ID;
-  if (!config.apiBaseUrl) updates.apiBaseUrl = DEFAULT_API;
-  if (Object.keys(updates).length > 0) {
-    await chrome.storage.sync.set(updates);
-  }
+async function getAuthToken() {
+  const stored = await chrome.storage.local.get(TOKEN_KEY);
+  return stored[TOKEN_KEY] || null;
 }
 
 function setBadge(ok) {
@@ -61,11 +55,14 @@ function setBadge(ok) {
   chrome.action.setBadgeBackgroundColor({ color: '#dc2626' });
 }
 
-async function postEventToApi(event, apiBaseUrl) {
+async function postEventToApi(event, apiBaseUrl, authToken) {
   const base = (apiBaseUrl || DEFAULT_API).replace(/\/$/, '');
   const res = await fetch(`${base}/api/events`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${authToken}`,
+    },
     body: JSON.stringify(event),
   });
   if (!res.ok) {
@@ -88,6 +85,9 @@ async function enqueueEvent(event) {
 
 async function flushQueue() {
   const { apiBaseUrl } = await getConfig();
+  const authToken = await getAuthToken();
+  if (!authToken) return;
+
   const stored = await chrome.storage.local.get(QUEUE_KEY);
   const queue = stored[QUEUE_KEY] ?? [];
   if (queue.length === 0) return;
@@ -96,7 +96,7 @@ async function flushQueue() {
   for (const event of queue) {
     const payload = { ...event };
     delete payload.queuedAt;
-    const ok = await postEventToApi(payload, apiBaseUrl);
+    const ok = await postEventToApi(payload, apiBaseUrl, authToken);
     if (ok) {
       console.info('[time-tracker] queued event saved', payload.domain);
     } else {
@@ -112,8 +112,15 @@ async function flushQueue() {
 
 async function sendEvent(event) {
   const { apiBaseUrl } = await getConfig();
+  const authToken = await getAuthToken();
+  if (!authToken) {
+    console.warn('[time-tracker] no auth token — log in via extension options or dashboard');
+    setBadge(false);
+    return false;
+  }
+
   try {
-    const ok = await postEventToApi(event, apiBaseUrl);
+    const ok = await postEventToApi(event, apiBaseUrl, authToken);
     if (ok) {
       console.info('[time-tracker] event saved', event.domain, `${event.durationSec}s`);
       setBadge(true);
@@ -134,8 +141,9 @@ async function sendEvent(event) {
 async function flushSession(reason) {
   if (!currentSession) return;
 
-  const { userId, enabled } = await getConfig();
-  if (!enabled || !userId) {
+  const { enabled } = await getConfig();
+  const authToken = await getAuthToken();
+  if (!enabled || !authToken) {
     currentSession = null;
     return;
   }
@@ -147,14 +155,13 @@ async function flushSession(reason) {
   if (durationSec < MIN_DURATION_SEC || !session.domain) return;
 
   await sendEvent({
-    userId,
     timestamp: new Date(session.startedAt).toISOString(),
     type: 'domain_visit',
     app: 'Chrome',
     domain: session.domain,
     title: session.title,
     durationSec,
-    metadata: { source: 'browser-extension', reason, localDate: localDateKey(session.startedAt) },
+    metadata: { sourceClient: 'chrome-extension', reason, localDate: localDateKey(session.startedAt) },
   });
 }
 
@@ -184,7 +191,6 @@ async function syncActiveTab() {
 }
 
 async function bootstrap() {
-  await ensureDefaults();
   chrome.alarms.create(FLUSH_ALARM, { periodInMinutes: 1 });
   await flushQueue();
   await syncActiveTab();
@@ -243,16 +249,18 @@ chrome.idle.onStateChanged.addListener(async (state) => {
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type === 'get-status') {
-    Promise.all([getConfig(), chrome.storage.local.get(QUEUE_KEY)]).then(([config, stored]) => {
-      sendResponse({
-        enabled: config.enabled,
-        userId: config.userId,
-        apiBaseUrl: config.apiBaseUrl,
-        pendingCount: (stored[QUEUE_KEY] ?? []).length,
-        tracking: !!currentSession,
-        currentDomain: currentSession?.domain ?? null,
-      });
-    });
+    Promise.all([getConfig(), getAuthToken(), chrome.storage.local.get(QUEUE_KEY)]).then(
+      ([config, authToken, stored]) => {
+        sendResponse({
+          enabled: config.enabled,
+          authenticated: !!authToken,
+          apiBaseUrl: config.apiBaseUrl,
+          pendingCount: (stored[QUEUE_KEY] ?? []).length,
+          tracking: !!currentSession,
+          currentDomain: currentSession?.domain ?? null,
+        });
+      },
+    );
     return true;
   }
   return false;
