@@ -1,5 +1,5 @@
 import { Injectable, inject, signal } from '@angular/core';
-import { HttpClient } from '@angular/common/http';
+import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import { firstValueFrom } from 'rxjs';
 
 import { environment } from '../../../environments/environment';
@@ -10,12 +10,31 @@ export interface VoiceLogResult {
   transcript: string;
   added: number;
   parsed: number;
+  updated: number;
+  /** When a block was moved to another day, jump the dashboard there. */
+  navigateToDate?: string;
+}
+
+/** Short-lived context so follow-ups like "actually push it back two hours" work. */
+export interface VoiceMutationContext {
+  lastEventId?: string;
+  lastTargetActivity?: string;
+  lastStorageDate?: string;
+}
+
+interface MutateResponse {
+  applied: boolean;
+  intent: 'mutate' | 'create';
+  reason?: string;
+  voiceContext?: VoiceMutationContext | null;
+  navigateToDate?: string;
+  operation?: { action?: string; deletedCount?: number };
 }
 
 /**
- * Records the mic, transcribes it (Deepgram via /api/transcribe), parses the
- * transcript into schedule blocks (/api/schedule/parse), and stores them as
- * activity events (/api/events) so they appear on the timeline.
+ * Records the mic, transcribes it (Deepgram via /api/transcribe), then either
+ * mutates an existing block (/api/schedule/mutate) or creates new events
+ * (/api/schedule/parse → /api/events).
  */
 @Injectable({ providedIn: 'root' })
 export class VoiceLogService {
@@ -25,8 +44,15 @@ export class VoiceLogService {
   readonly recording = signal(false);
   readonly busy = signal(false);
 
+  /** Remembers the last voice-created or voice-edited block for follow-up commands. */
+  private mutationContext: VoiceMutationContext | null = null;
+
   private recorder: MediaRecorder | null = null;
   private chunks: Blob[] = [];
+
+  clearMutationContext(): void {
+    this.mutationContext = null;
+  }
 
   async toggle(selectedDate: string): Promise<VoiceLogResult | null> {
     if (this.recording()) {
@@ -62,7 +88,7 @@ export class VoiceLogService {
           rec.stream.getTracks().forEach((t) => t.stop());
 
           if (blob.size < 1000) {
-            resolve({ transcript: '', added: 0, parsed: 0 });
+            resolve({ transcript: '', added: 0, parsed: 0, updated: 0 });
             return;
           }
 
@@ -74,11 +100,29 @@ export class VoiceLogService {
           );
           const transcript = (tr.transcript ?? '').trim();
           if (!transcript) {
-            resolve({ transcript: '', added: 0, parsed: 0 });
+            resolve({ transcript: '', added: 0, parsed: 0, updated: 0 });
             return;
           }
 
           const referenceDate = `${selectedDate}T12:00:00.000Z`;
+          const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+          const mutateResult = await this.tryMutate(
+            transcript,
+            referenceDate,
+            selectedDate,
+            timezone,
+          );
+          if (mutateResult?.applied) {
+            resolve({
+              transcript,
+              added: 0,
+              parsed: 0,
+              updated: 1,
+              navigateToDate: mutateResult.navigateToDate,
+            });
+            return;
+          }
+
           const categoryContext = this.categoryContext.toApiContext();
           const parsed = await firstValueFrom(
             this.http.post<{ blocks: ScheduleBlock[] }>(`${environment.apiUrl}/api/schedule/parse`, {
@@ -93,12 +137,21 @@ export class VoiceLogService {
           const events = scheduleBlocksToEvents(blocks, selectedDate);
 
           if (events.length) {
-            await firstValueFrom(
-              this.http.post(`${environment.apiUrl}/api/events`, { events }),
+            const created = await firstValueFrom(
+              this.http.post<{ ids?: string[] }>(`${environment.apiUrl}/api/events`, { events }),
             );
+            const firstId = created.ids?.[0];
+            const firstTitle = events[0]?.title;
+            if (firstId && firstTitle) {
+              this.mutationContext = {
+                lastEventId: firstId,
+                lastTargetActivity: firstTitle,
+                lastStorageDate: selectedDate,
+              };
+            }
           }
 
-          resolve({ transcript, added: events.length, parsed: blocks.length });
+          resolve({ transcript, added: events.length, parsed: blocks.length, updated: 0 });
         } catch (err) {
           reject(err);
         } finally {
@@ -107,6 +160,55 @@ export class VoiceLogService {
       };
       rec.stop();
     });
+  }
+
+  private async tryMutate(
+    transcript: string,
+    referenceDate: string,
+    viewDate: string,
+    timezone: string,
+  ): Promise<MutateResponse | null> {
+    try {
+      const result = await firstValueFrom(
+        this.http.post<MutateResponse>(`${environment.apiUrl}/api/schedule/mutate`, {
+          transcript,
+          referenceDate,
+          viewDate,
+          timezone,
+          voiceContext: this.mutationContext ?? undefined,
+        }),
+      );
+      if (result.applied && result.voiceContext) {
+        this.mutationContext = result.voiceContext;
+      } else if (
+        result.applied
+        && (result.operation?.action === 'cancel' || result.operation?.action === 'clear_schedule')
+      ) {
+        this.mutationContext = result.voiceContext ?? null;
+      }
+      return result.applied ? result : null;
+    } catch (err) {
+      if (err instanceof HttpErrorResponse) {
+        if (err.status === 422 && err.error?.intent === 'create') {
+          return null;
+        }
+        if (err.status === 422 && err.error?.intent === 'mutate') {
+          throw new Error(
+            err.error?.reason === 'ambiguous_target'
+              ? 'Could not tell which event to update. Name it, e.g. "move my meeting to Friday".'
+              : 'Could not update that event on the timeline.',
+          );
+        }
+        if (err.status === 404) {
+          throw new Error(
+            err.error?.reason === 'no_matching_event'
+              ? 'Could not find a matching event to update. Try naming it, e.g. "my meeting".'
+              : 'No events on this day to update.',
+          );
+        }
+      }
+      throw err;
+    }
   }
 }
 

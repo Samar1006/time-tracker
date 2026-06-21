@@ -11,6 +11,9 @@
 import express from 'express';
 import Anthropic from '@anthropic-ai/sdk';
 import { categorizeText } from '../services/categorizationService.js';
+import { requireAuth } from '../middleware/authMiddleware.js';
+import { applyScheduleMutation } from '../services/scheduleMutationService.js';
+import { parseDateOnly } from '../services/aggregationService.js';
 
 const router = express.Router();
 
@@ -110,6 +113,16 @@ function parseFmt(label) {
   return null;
 }
 
+/** Parse a spoken clock phrase ("2 pm", "2:30 PM", "noon") to minutes since midnight. */
+export function parseSpokenClock(text) {
+  const normalized = normalizeSpokenTimes(String(text ?? '').trim());
+  const tokenRe = new RegExp(`\\b(${FROM_TO_TIME})\\b`, 'i');
+  const match = normalized.match(tokenRe);
+  if (!match) return null;
+  const contextPm = /\bpm\b/i.test(normalized) && !/\bam\b/i.test(normalized);
+  return toMinutes(match, contextPm);
+}
+
 function isDurationToken(seg, index, length) {
   const before = seg.slice(Math.max(0, index - 5), index).toLowerCase();
   const after = seg.slice(index + length, index + length + 12).toLowerCase();
@@ -148,7 +161,7 @@ export function parseFromToRange(seg, contextPm) {
 }
 
 // Extract spoken duration in minutes from a segment (may be partial).
-function extractDurationMinutes(text) {
+export function extractDurationMinutes(text) {
   const lower = text.toLowerCase();
   let mins = 0;
 
@@ -823,6 +836,47 @@ router.post('/parse', async (req, res) => {
       referenceDate: refDate,
     });
   }
+  res.json(result);
+});
+
+router.post('/mutate', requireAuth, async (req, res) => {
+  const {
+    transcript,
+    referenceDate,
+    viewDate,
+    timezone = 'UTC',
+    voiceContext,
+  } = req.body ?? {};
+
+  if (typeof transcript !== 'string' || !transcript.trim()) {
+    return res.status(400).json({ error: 'Body must include a non-empty "transcript" string.' });
+  }
+
+  const refDate = referenceDate ? new Date(referenceDate) : new Date();
+  if (Number.isNaN(refDate.getTime())) {
+    return res.status(400).json({ error: 'Invalid referenceDate — use ISO 8601 format.' });
+  }
+
+  const day = parseDateOnly(viewDate) ?? toDateISO(refDate);
+  const result = await applyScheduleMutation({
+    userId: req.user.id,
+    transcript: transcript.trim(),
+    referenceDate: refDate,
+    viewDate: day,
+    timeZone: timezone,
+    voiceContext: voiceContext && typeof voiceContext === 'object' ? voiceContext : null,
+  });
+
+  if (!result.applied) {
+    if (result.intent === 'create') {
+      return res.status(422).json(result);
+    }
+    const status = result.reason === 'no_events_to_edit' || result.reason === 'no_matching_event'
+      ? 404
+      : 422;
+    return res.status(status).json(result);
+  }
+
   res.json(result);
 });
 

@@ -1,19 +1,21 @@
 import { Component, computed, inject, signal } from '@angular/core';
-import { catchError, forkJoin, map, of, switchMap, timeout } from 'rxjs';
+import { catchError, combineLatest, forkJoin, map, of, switchMap, timeout } from 'rxjs';
 import { toObservable, toSignal } from '@angular/core/rxjs-interop';
 
 import { AuthService } from '../../../../core/services/auth.service';
 import { TimelineService } from '../../../../core/services/timeline.service';
 import { TimelineResponse } from '../../../../core/models/timeline.model';
-import { CATEGORY_COLORS } from '../../../../core/constants/categories';
 import { formatDuration } from '../../../../core/utils/duration.util';
 import { AppShellComponent } from '../../../../shared/layouts/app-shell/app-shell.component';
 import { StatCardComponent } from '../../../dashboard/components/stat-card/stat-card.component';
+import { ActivityDonutChartComponent } from '../../components/activity-donut-chart/activity-donut-chart.component';
 import {
   aggregateTimelineSeconds,
-  computeCategoryBreakdown,
-  computeTopActivities,
+  computeActivityDonutSlices,
+  daysInCalendarMonth,
+  formatDisplayDate,
   getWeekDateRange,
+  shiftDate,
   toDateInputValue,
   toMonthInputValue
 } from '../../../dashboard/utils/dashboard-stats.util';
@@ -32,7 +34,7 @@ interface StatsData {
 
 @Component({
   selector: 'app-stats',
-  imports: [AppShellComponent, StatCardComponent],
+  imports: [AppShellComponent, StatCardComponent, ActivityDonutChartComponent],
   templateUrl: './stats.component.html',
   styleUrl: './stats.component.scss'
 })
@@ -41,16 +43,20 @@ export class StatsComponent {
   private readonly timelineService = inject(TimelineService);
 
   readonly period = signal<StatsPeriod>('day');
+  readonly selectedDay = signal(toDateInputValue(new Date()));
   readonly loading = signal(true);
   readonly error = signal<string | null>(null);
 
   readonly userId = computed(() => this.auth.user()?.userId ?? null);
-  readonly categoryColors = CATEGORY_COLORS;
   readonly formatDuration = formatDuration;
+  readonly selectedDayLabel = computed(() => formatDisplayDate(this.selectedDay()));
+  readonly isSelectedToday = computed(
+    () => this.selectedDay() === toDateInputValue(new Date())
+  );
 
   private readonly statsData = toSignal(
-    toObservable(this.auth.user).pipe(
-      switchMap((user) => {
+    combineLatest([toObservable(this.auth.user), toObservable(this.selectedDay)]).pipe(
+      switchMap(([user, selectedDay]) => {
         const userId = user?.userId;
         if (!userId) {
           this.loading.set(false);
@@ -71,7 +77,7 @@ export class StatsComponent {
             const monthDates =
               monthSummary?.days.filter((day) => day.totalTrackedSec > 0).map((day) => day.date) ??
               [];
-            const datesToFetch = [...new Set([today, ...weekDates, ...monthDates])];
+            const datesToFetch = [...new Set([today, selectedDay, ...weekDates, ...monthDates])];
 
             if (datesToFetch.length === 0) {
               return of({
@@ -129,6 +135,13 @@ export class StatsComponent {
     { initialValue: null as StatsData | null }
   );
 
+  readonly dayViewTotal = computed(() => {
+    const data = this.statsData();
+    if (!data) return '—';
+    const timeline = data.timelinesByDate.get(this.selectedDay());
+    return formatDuration(timeline?.totalTrackedSec ?? 0);
+  });
+
   readonly dayTotal = computed(() => {
     const data = this.statsData();
     if (!data) return '—';
@@ -153,7 +166,7 @@ export class StatsComponent {
 
   readonly periodTotal = computed(() => {
     const period = this.period();
-    if (period === 'day') return this.dayTotal();
+    if (period === 'day') return this.dayViewTotal();
     if (period === 'week') return this.weekTotal();
     return this.monthTotal();
   });
@@ -166,7 +179,7 @@ export class StatsComponent {
     let dates: string[];
 
     if (period === 'day') {
-      dates = [data.today];
+      dates = [this.selectedDay()];
     } else if (period === 'week') {
       dates = data.weekDates;
     } else {
@@ -178,11 +191,42 @@ export class StatsComponent {
       .filter((timeline): timeline is TimelineResponse => !!timeline);
   });
 
-  readonly categoryBreakdown = computed(() => computeCategoryBreakdown(this.activeTimelines()));
+  readonly periodDayCount = computed(() => {
+    const period = this.period();
+    if (period === 'day') return 1;
+    if (period === 'week') return 7;
+    return daysInCalendarMonth();
+  });
 
-  readonly topActivities = computed(() => computeTopActivities(this.activeTimelines(), 8));
+  readonly activityDonutSlices = computed(() =>
+    computeActivityDonutSlices(this.activeTimelines(), this.periodDayCount())
+  );
+
+  readonly hasOnlyUntracked = computed(() => {
+    const slices = this.activityDonutSlices();
+    return slices.length === 1 && slices[0]?.label === 'untracked';
+  });
 
   setPeriod(next: StatsPeriod): void {
     this.period.set(next);
+  }
+
+  previousDay(): void {
+    this.selectedDay.set(shiftDate(this.selectedDay(), -1));
+  }
+
+  nextDay(): void {
+    this.selectedDay.set(shiftDate(this.selectedDay(), 1));
+  }
+
+  onDateInput(event: Event): void {
+    const value = (event.target as HTMLInputElement).value;
+    if (value) {
+      this.selectedDay.set(value);
+    }
+  }
+
+  goToToday(): void {
+    this.selectedDay.set(toDateInputValue(new Date()));
   }
 }

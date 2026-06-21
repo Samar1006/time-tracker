@@ -1,0 +1,30 @@
+<div class="activity-donut">
+  <svg
+    class="activity-donut__chart"
+    viewBox="0 0 240 240"
+    role="img"
+    [attr.aria-label]="'Activity breakdown donut chart with ' + segments().length + ' segments'"
+  >
+    @for (segment of segments(); track segment.label) {
+      <path
+        class="activity-donut__slice"
+        [attr.d]="segment.path"
+        [attr.fill]="segment.color"
+        [attr.aria-label]="segment.label + ': ' + segment.percent.toFixed(1) + '%'"
+      >
+        <title>{{ segment.label }} — {{ segment.percent.toFixed(1) }}% ({{ formatDuration(segment.seconds) }})</title>
+      </path>
+    }
+  </svg>
+
+  <ul class="activity-donut__legend">
+    @for (segment of segments(); track segment.label) {
+      <li class="activity-donut__legend-item">
+        <span class="activity-donut__swatch" [style.background]="segment.color"></span>
+        <span class="activity-donut__name">{{ segment.label }}</span>
+        <span class="activity-donut__percent">{{ segment.percent.toFixed(1) }}%</span>
+        <span class="activity-donut__duration">{{ formatDuration(segment.seconds) }}</span>
+      </li>
+    }
+  </ul>
+</div>

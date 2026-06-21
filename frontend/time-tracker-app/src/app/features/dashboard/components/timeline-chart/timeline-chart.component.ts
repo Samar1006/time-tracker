@@ -1,4 +1,4 @@
-import { Component, computed, ElementRef, input, output, signal, viewChild } from '@angular/core';
+import { Component, computed, effect, ElementRef, HostListener, afterEveryRender, input, output, signal, untracked, viewChild } from '@angular/core';
 
 import {
   CATEGORY_COLORS,
@@ -7,7 +7,13 @@ import {
 } from '../../../../core/constants/categories';
 import { ActivityCategory, TimelineBlock, TimelineHour } from '../../../../core/models/timeline.model';
 import { formatDuration, formatHourLabel } from '../../../../core/utils/duration.util';
-import { formatDisplayDate } from '../../utils/dashboard-stats.util';
+import {
+  buildCalendarGrid,
+  formatMonthLabel,
+  monthKeyFromDate,
+  shiftMonth
+} from '../../utils/calendar.util';
+import { formatDisplayDate, toDateInputValue } from '../../utils/dashboard-stats.util';
 
 interface TooltipState {
   category: string;
@@ -136,21 +142,24 @@ function layoutVerticalBlocks(
 
   const items = blocks
     .map((block) => {
-      const startIso = block.eventStart ?? block.start;
-      const endIso = block.eventEnd ?? block.end;
-      const startMin = minutesOnViewDate(startIso, viewDate, timeZone);
-      const endMin = minutesOnViewDate(endIso, viewDate, timeZone);
+      // Slice start/end match the portion of this event on the viewed calendar day.
+      const startMin = minutesOnViewDate(block.start, viewDate, timeZone);
+      let endMin = minutesOnViewDate(block.end, viewDate, timeZone);
+      if (endMin <= startMin && block.durationSec > 0) {
+        endMin = startMin + block.durationSec / 60;
+      }
       const clipStart = Math.max(startMin, rangeStartMin);
       const clipEnd = Math.min(endMin, rangeStartMin + rangeSpanMin);
       if (clipEnd <= clipStart) {
         return null;
       }
+      const spanMin = clipEnd - clipStart;
       return {
         block,
         startMin: clipStart,
         endMin: clipEnd,
         topPct: ((clipStart - rangeStartMin) / rangeSpanMin) * 100,
-        heightPct: ((clipEnd - clipStart) / rangeSpanMin) * 100,
+        heightPct: (spanMin / rangeSpanMin) * 100,
         column: 0,
         columnCount: 1
       };
@@ -185,7 +194,7 @@ function layoutVerticalBlocks(
   return items.map((item) => ({
     block: item.block,
     topPct: item.topPct,
-    heightPct: Math.max(item.heightPct, 0.6),
+    heightPct: item.heightPct,
     column: item.column,
     columnCount: item.columnCount
   }));
@@ -208,16 +217,28 @@ export class TimelineChartComponent {
   private readonly scrollContainer = viewChild<ElementRef<HTMLElement>>('scrollContainer');
   private pinchStartScale = MIN_ZOOM;
   private pointerAnchorY = 0;
+  private savedScrollTop = 0;
+  private stableDate = '';
+  private scrollRestorePending = false;
+  private pendingDateChange = false;
+  private pendingDate = '';
 
   readonly zoomScale = signal(MIN_ZOOM);
   readonly tooltip = signal<TooltipState | null>(null);
+  readonly calendarOpen = signal(false);
+  readonly popupMonth = signal(monthKeyFromDate(toDateInputValue(new Date())));
   readonly categoryLegend = CATEGORY_LEGEND;
   readonly categoryLabels = CATEGORY_LABELS;
+  readonly popupWeekdays = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
+
+  readonly displayTitle = computed(() => formatDisplayDate(this.date()));
+  readonly popupMonthLabel = computed(() => formatMonthLabel(this.popupMonth()));
+  readonly popupCells = computed(() =>
+    buildCalendarGrid(this.popupMonth(), this.date(), new Map())
+  );
 
   readonly pxPerHour = computed(() => BASE_PX_PER_HOUR * this.zoomScale());
   readonly canvasHeightPx = computed(() => HOURS_PER_DAY * this.pxPerHour());
-
-  readonly displayTitle = computed(() => formatDisplayDate(this.date()));
 
   readonly hourGuides = computed((): HourGuide[] => {
     const guides: HourGuide[] = [];
@@ -251,6 +272,49 @@ export class TimelineChartComponent {
     this.hours().some((hour) => hour.totalTrackedSec > 0)
   );
 
+  constructor() {
+    effect(() => {
+      const date = this.date();
+      this.hours();
+
+      if (this.stableDate === '') {
+        this.stableDate = date;
+      }
+
+      const dateChanged = date !== this.stableDate;
+      const el = untracked(() => this.scrollContainer()?.nativeElement);
+
+      if (!dateChanged && el) {
+        this.savedScrollTop = el.scrollTop;
+      }
+
+      this.pendingDateChange = dateChanged;
+      this.pendingDate = date;
+      this.scrollRestorePending = true;
+    });
+
+    afterEveryRender(() => {
+      if (!this.scrollRestorePending) {
+        return;
+      }
+
+      const container = this.scrollContainer()?.nativeElement;
+      if (!container) {
+        return;
+      }
+
+      this.scrollRestorePending = false;
+
+      if (this.pendingDateChange) {
+        container.scrollTop = 0;
+        this.stableDate = this.pendingDate;
+        return;
+      }
+
+      container.scrollTop = this.savedScrollTop;
+    });
+  }
+
   formatBlockDuration(seconds: number): string {
     return formatDuration(seconds);
   }
@@ -276,6 +340,10 @@ export class TimelineChartComponent {
 
   blockContinuesFromPrevDay(block: TimelineBlock): boolean {
     return block.spansFromPrevDay === true;
+  }
+
+  blockIsCompact(positioned: PositionedBlock): boolean {
+    return positioned.block.durationSec < 20 * 60;
   }
 
   categoryColor(category: ActivityCategory): string {
@@ -317,10 +385,34 @@ export class TimelineChartComponent {
     return `${block.start}|${block.end}|${block.activity}|${block.category}`;
   }
 
-  onDatePick(event: Event): void {
-    const value = (event.target as HTMLInputElement).value;
-    if (value) {
-      this.selectDate.emit(value);
+  onDatePick(date: string): void {
+    this.selectDate.emit(date);
+    this.calendarOpen.set(false);
+  }
+
+  toggleCalendar(event: MouseEvent): void {
+    event.stopPropagation();
+    const opening = !this.calendarOpen();
+    if (opening) {
+      this.popupMonth.set(monthKeyFromDate(this.date()));
+    }
+    this.calendarOpen.set(opening);
+  }
+
+  previousPopupMonth(event: MouseEvent): void {
+    event.stopPropagation();
+    this.popupMonth.update((month) => shiftMonth(month, -1));
+  }
+
+  nextPopupMonth(event: MouseEvent): void {
+    event.stopPropagation();
+    this.popupMonth.update((month) => shiftMonth(month, 1));
+  }
+
+  @HostListener('document:click')
+  closeCalendar(): void {
+    if (this.calendarOpen()) {
+      this.calendarOpen.set(false);
     }
   }
 
