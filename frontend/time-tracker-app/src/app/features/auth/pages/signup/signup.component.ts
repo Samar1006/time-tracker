@@ -61,11 +61,11 @@ export class SignupComponent {
     });
   }
 
-  onGoogleSignIn(): void {
+  onGoogleSignIn(credential: string): void {
     this.loading.set(true);
     this.error.set(null);
 
-    this.auth.loginWithDemoAccount().subscribe({
+    this.auth.loginWithGoogle(credential).subscribe({
       next: () => void this.router.navigate(['/dashboard']),
       error: (err: HttpErrorResponse) => {
         this.error.set(this.extractErrorMessage(err));

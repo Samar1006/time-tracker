@@ -40,6 +40,37 @@ export function createAccessToken(user) {
   );
 }
 
+export async function verifyGoogleCredential(credential) {
+  const clientId = process.env.GOOGLE_CLIENT_ID;
+  if (!clientId) {
+    throw new AuthError('GOOGLE_CLIENT_ID is not configured on the server.', 500);
+  }
+  if (!credential) {
+    throw new AuthError('Google credential is required.', 400);
+  }
+
+  const response = await fetch(
+    `https://oauth2.googleapis.com/tokeninfo?id_token=${encodeURIComponent(credential)}`,
+  );
+  if (!response.ok) {
+    throw new AuthError('Invalid Google credential.', 401);
+  }
+
+  const profile = await response.json();
+  if (profile.aud !== clientId) {
+    throw new AuthError('Google credential audience does not match this app.', 401);
+  }
+  if (!profile.email) {
+    throw new AuthError('Google account did not return an email.', 400);
+  }
+
+  return {
+    email: String(profile.email).trim().toLowerCase(),
+    fullName: profile.name || profile.email,
+    googleSubject: profile.sub,
+  };
+}
+
 export function verifyAccessToken(token) {
   try {
     const payload = jwt.verify(token, getJwtSecret());
@@ -92,6 +123,25 @@ export async function authenticateUser({ email, password }) {
   return user;
 }
 
+export async function authenticateGoogleUser(credential) {
+  const profile = await verifyGoogleCredential(credential);
+  const existing = usersByEmail.get(profile.email);
+  if (existing) return existing;
+
+  const id = `user_google_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  const user = {
+    id,
+    email: profile.email,
+    fullName: profile.fullName,
+    passwordHash: '',
+    provider: 'google',
+    googleSubject: profile.googleSubject,
+  };
+  usersByEmail.set(user.email, user);
+  usersById.set(user.id, user);
+  return user;
+}
+
 export function findUserById(id) {
   return usersById.get(id) ?? null;
 }
@@ -139,8 +189,10 @@ export default {
   publicUser,
   createAccessToken,
   verifyAccessToken,
+  verifyGoogleCredential,
   registerUser,
   authenticateUser,
+  authenticateGoogleUser,
   findUserById,
   ensureDemoUser,
   resetAuthStore,

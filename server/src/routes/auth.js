@@ -2,6 +2,7 @@
 
 import { Router } from 'express';
 import {
+  authenticateGoogleUser,
   authenticateUser,
   createAccessToken,
   DEMO_USER,
@@ -44,6 +45,20 @@ router.post('/login', async (req, res) => {
     }
 
     const user = await authenticateUser({ email, password });
+    const token = createAccessToken(user);
+    res.json({ token, user: publicUser(user) });
+  } catch (err) {
+    if (err instanceof AuthError) {
+      return res.status(err.status).json({ error: err.message });
+    }
+    throw err;
+  }
+});
+
+router.post('/google', async (req, res) => {
+  try {
+    const { credential } = req.body ?? {};
+    const user = await authenticateGoogleUser(credential);
     const token = createAccessToken(user);
     res.json({ token, user: publicUser(user) });
   } catch (err) {
