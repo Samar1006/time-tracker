@@ -41,12 +41,12 @@ export function createAccessToken(user) {
 }
 
 export async function verifyGoogleCredential(credential) {
+  if (!credential) {
+    throw new AuthError('Google credential is required.', 400);
+  }
   const clientId = process.env.GOOGLE_CLIENT_ID;
   if (!clientId) {
     throw new AuthError('GOOGLE_CLIENT_ID is not configured on the server.', 500);
-  }
-  if (!credential) {
-    throw new AuthError('Google credential is required.', 400);
   }
 
   const response = await fetch(

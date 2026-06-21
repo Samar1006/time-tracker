@@ -30,6 +30,7 @@ Documented in `server/.env.example`. Never commit real `.env`.
 | `REDIS_URL` | No | Samar | Raw event storage; in-memory fallback when unset |
 | `DEEPGRAM_API_KEY` | For live STT only | Allisonmini | Speech-to-text |
 | `ANTHROPIC_API_KEY` | No | Allisonmini | Optional Claude schedule refinement (on `ai-pipeline`) |
+| `GOOGLE_CLIENT_ID` | For Google login | Frontend/backend | OAuth web client ID; backend validates Google credentials against this audience, frontend uses the same ID when rendering the Google Sign-In button |
 
 ---
 
@@ -155,6 +156,13 @@ Optional request field: `referenceDate` (ISO 8601) — anchor for resolving “t
 **Request:** `{ "fullName", "email", "password" }` (password min 8 chars)  
 **Success:** `201` — `{ "token", "user" }`  
 **Errors:** `400`, `409` (email taken)
+
+#### `POST /api/auth/google`
+
+**Status:** ✅ Implemented on `nikki`  
+**Request:** `{ "credential" }` where `credential` is the Google Identity Services ID token  
+**Success:** `200` — `{ "token", "user": { "id", "email", "fullName" } }`  
+**Errors:** `400` (missing credential), `401` (invalid Google credential), `500` (missing `GOOGLE_CLIENT_ID`)
 
 #### `GET /api/auth/me`
 

@@ -4,15 +4,26 @@ import { request, startTestServer, stopTestServer } from './helpers/http.js';
 import { resetAuthStore, DEMO_USER } from '../src/services/authService.js';
 
 describe('auth routes', () => {
+  const originalGoogleClientId = process.env.GOOGLE_CLIENT_ID;
+  const originalFetch = globalThis.fetch;
+
   before(async () => {
     await startTestServer();
   });
 
   after(async () => {
+    if (originalGoogleClientId === undefined) {
+      delete process.env.GOOGLE_CLIENT_ID;
+    } else {
+      process.env.GOOGLE_CLIENT_ID = originalGoogleClientId;
+    }
+    globalThis.fetch = originalFetch;
     await stopTestServer();
   });
 
   beforeEach(async () => {
+    process.env.GOOGLE_CLIENT_ID = 'test-google-client-id.apps.googleusercontent.com';
+    globalThis.fetch = originalFetch;
     await resetAuthStore();
   });
 
@@ -67,5 +78,36 @@ describe('auth routes', () => {
   it('GET /api/auth/me rejects missing token', async () => {
     const res = await request('/api/auth/me');
     assert.equal(res.status, 401);
+  });
+
+  it('POST /api/auth/google rejects missing credential', async () => {
+    const res = await request('/api/auth/google', {
+      method: 'POST',
+      body: {},
+    });
+
+    assert.equal(res.status, 400);
+    assert.match(res.body.error, /google credential is required/i);
+  });
+
+  it('POST /api/auth/google rejects invalid Google credential', async () => {
+    globalThis.fetch = async (url, options) => {
+      if (String(url).startsWith('https://oauth2.googleapis.com/tokeninfo')) {
+        return {
+          ok: false,
+          status: 400,
+          json: async () => ({ error: 'invalid_token' }),
+        };
+      }
+      return originalFetch(url, options);
+    };
+
+    const res = await request('/api/auth/google', {
+      method: 'POST',
+      body: { credential: 'fake-token' },
+    });
+
+    assert.equal(res.status, 401);
+    assert.match(res.body.error, /invalid google credential/i);
   });
 });
