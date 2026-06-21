@@ -8,7 +8,6 @@ import {
   appendEvents,
   clearEvents,
   countEvents,
-  DEFAULT_USER_ID,
   loadEvents,
 } from '../services/activityStore.js';
 import {
@@ -18,6 +17,7 @@ import {
 } from '../services/aggregationService.js';
 import { getStorageMode } from '../services/redisClient.js';
 import { sampleActivityEvents } from '../data/sampleActivityEvents.js';
+import { requireAuth } from '../middleware/authMiddleware.js';
 
 const router = Router();
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -37,20 +37,22 @@ function padTimelineHours(hours) {
   );
 }
 
-function resolveUserId(req) {
-  return req.query.userId || req.body?.userId || DEFAULT_USER_ID;
-}
-
 function resolveDate(req) {
   return parseDateOnly(req.query.date || req.body?.date) ?? todayUtcDate();
 }
 
-function normalizeEvent(raw, index) {
-  const userId = raw.userId;
+function rejectUserIdMismatch(res, authUserId, providedUserId, label = 'userId') {
+  if (providedUserId && providedUserId !== authUserId) {
+    res.status(403).json({ error: `${label} does not match authenticated user.` });
+    return true;
+  }
+  return false;
+}
+
+function normalizeEvent(raw, index, userId) {
   const timestamp = raw.timestamp;
   const type = raw.type;
 
-  if (!userId) return { error: `events[${index}] missing userId.` };
   if (!timestamp) return { error: `events[${index}] missing timestamp.` };
   if (!type) return { error: `events[${index}] missing type.` };
 
@@ -74,7 +76,7 @@ function normalizeEvent(raw, index) {
 
 function collectEvents(body) {
   if (Array.isArray(body?.events)) return body.events;
-  if (body?.userId && body?.timestamp && body?.type) return [body];
+  if (body?.timestamp && body?.type) return [body];
   return null;
 }
 
@@ -82,16 +84,25 @@ router.get('/timeline/health', (_req, res) => {
   res.json({ ok: true, storage: getStorageMode() });
 });
 
-router.post('/events', async (req, res, next) => {
+router.post('/events', requireAuth, async (req, res, next) => {
   try {
+    const authUserId = req.user.id;
     const incoming = collectEvents(req.body);
     if (!incoming || incoming.length === 0) {
       return res.status(400).json({ error: 'Provide a raw event or { events: [...] }.' });
     }
 
+    for (let i = 0; i < incoming.length; i += 1) {
+      if (incoming[i].userId && incoming[i].userId !== authUserId) {
+        return res.status(403).json({
+          error: `events[${i}] userId does not match authenticated user.`,
+        });
+      }
+    }
+
     const normalized = [];
     for (let i = 0; i < incoming.length; i += 1) {
-      const result = normalizeEvent(incoming[i], i);
+      const result = normalizeEvent(incoming[i], i, authUserId);
       if (result.error) return res.status(400).json({ error: result.error });
       normalized.push(result);
     }
@@ -125,13 +136,11 @@ router.post('/events', async (req, res, next) => {
   }
 });
 
-router.get('/timeline', async (req, res, next) => {
+router.get('/timeline', requireAuth, async (req, res, next) => {
   try {
-    const userId = req.query.userId;
-    if (!userId) {
-      return res.status(400).json({ error: 'Provide userId query param.' });
-    }
+    if (rejectUserIdMismatch(res, req.user.id, req.query.userId, 'userId query param')) return;
 
+    const userId = req.user.id;
     const date = parseDateOnly(req.query.date) ?? todayUtcDate();
     const timezone = req.query.timezone || 'UTC';
     const events = await loadEvents(userId, date);
@@ -153,14 +162,12 @@ router.get('/timeline', async (req, res, next) => {
   }
 });
 
-router.get('/events', async (req, res, next) => {
+router.get('/events', requireAuth, async (req, res, next) => {
   try {
-    const userId = req.query.userId;
-    const date = parseDateOnly(req.query.date) ?? todayUtcDate();
-    if (!userId) {
-      return res.status(400).json({ error: 'Provide userId query param.' });
-    }
+    if (rejectUserIdMismatch(res, req.user.id, req.query.userId, 'userId query param')) return;
 
+    const userId = req.user.id;
+    const date = parseDateOnly(req.query.date) ?? todayUtcDate();
     const events = await loadEvents(userId, date);
     res.json({ userId, date, count: events.length, events });
   } catch (err) {
@@ -168,9 +175,18 @@ router.get('/events', async (req, res, next) => {
   }
 });
 
-router.post('/events/seed', async (req, res, next) => {
+router.post('/events/seed', requireAuth, async (req, res, next) => {
   try {
-    const userId = resolveUserId(req);
+    const bodyUserId = req.body?.userId;
+    const queryUserId = req.query.userId;
+    if (bodyUserId && bodyUserId !== req.user.id) {
+      return res.status(403).json({ error: 'userId in body does not match authenticated user.' });
+    }
+    if (queryUserId && queryUserId !== req.user.id) {
+      return res.status(403).json({ error: 'userId query param does not match authenticated user.' });
+    }
+
+    const userId = req.user.id;
     const date = resolveDate(req);
     const replace = req.body?.replace !== false;
 
@@ -190,14 +206,12 @@ router.post('/events/seed', async (req, res, next) => {
   }
 });
 
-router.delete('/events', async (req, res, next) => {
+router.delete('/events', requireAuth, async (req, res, next) => {
   try {
-    const userId = req.query.userId;
-    const date = parseDateOnly(req.query.date) ?? todayUtcDate();
-    if (!userId) {
-      return res.status(400).json({ error: 'Provide userId query param.' });
-    }
+    if (rejectUserIdMismatch(res, req.user.id, req.query.userId, 'userId query param')) return;
 
+    const userId = req.user.id;
+    const date = parseDateOnly(req.query.date) ?? todayUtcDate();
     const before = await countEvents(userId, date);
     await clearEvents(userId, date);
     res.json({ cleared: before, userId, date });
