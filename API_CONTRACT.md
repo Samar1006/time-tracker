@@ -266,6 +266,32 @@ Used by dashboard drag-to-move and resize on timeline blocks with `eventId`.
 
 ---
 
+#### `DELETE /api/events/:eventId`
+
+**Status:** ✅ Implemented on `timeline-block-delete`  
+**Owner:** Samar / Frontend
+
+**Headers:** `Authorization: Bearer <token>` (required)
+
+**Query params:**
+
+| Param | Required | Default |
+|-------|----------|---------|
+| `date` | No | — |
+| `localDate` | No | — |
+
+Either `date` or `localDate` helps locate the event when it spans storage buckets; optional but recommended.
+
+**Success:** `200` — `{ "deleted": true, "eventId": "evt_abc123" }`
+
+**Errors:** `401`, `403` (tracked/browser-ingested events are read-only), `404` (event not found)
+
+Only `voice` and `manual` stored events may be deleted.
+
+Used by dashboard right-click delete on timeline blocks with `eventId`.
+
+---
+
 #### `GET /api/timeline`
 
 **Status:** ✅ Implemented on `ingestion-timeline`  

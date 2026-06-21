@@ -130,6 +130,24 @@ async function removeEventById(userId, eventId, searchDates) {
 }
 
 /**
+ * Locate and remove one stored event (cleans stale copies across nearby days).
+ * @returns {Promise<StoredEvent | null>}
+ */
+export async function deleteStoredEvent(userId, eventId, dateHint) {
+  const initialDates = buildSearchDates(dateHint, { metadata: { localDate: dateHint } }, []);
+  let located = null;
+  for (const date of initialDates) {
+    located = await findEventOnDay(userId, date, eventId);
+    if (located) break;
+  }
+  if (!located) return null;
+
+  const searchDates = buildSearchDates(located.storageDate, located.event, dateHint ? [dateHint] : []);
+  await deleteEventEverywhere(userId, eventId, searchDates);
+  return located.event;
+}
+
+/**
  * Update one event, moving it between storage days when needed.
  * Scans nearby days so stale copies are not left behind.
  * @returns {Promise<StoredEvent | null>}
@@ -206,5 +224,6 @@ export default {
   findEventOnDay,
   replaceEvent,
   deleteEventEverywhere,
+  deleteStoredEvent,
   loadMonthDayTotals,
 };

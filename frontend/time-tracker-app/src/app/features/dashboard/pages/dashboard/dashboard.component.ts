@@ -176,6 +176,23 @@ export class DashboardComponent {
     });
   }
 
+  onBlockDelete(eventId: string): void {
+    if (!this.userId()) {
+      return;
+    }
+
+    this.patchError.set(null);
+    this.softRefresh.set(true);
+
+    this.timelineService.deleteEvent(eventId, this.selectedDate()).subscribe({
+      next: () => this.reloadTick.update((n) => n + 1),
+      error: () => {
+        this.softRefresh.set(false);
+        this.patchError.set('Could not delete this time block.');
+      }
+    });
+  }
+
   async onVoiceLog(): Promise<void> {
     this.voiceError.set(null);
     try {

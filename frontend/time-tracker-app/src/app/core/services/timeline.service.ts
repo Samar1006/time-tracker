@@ -70,4 +70,12 @@ export class TimelineService {
   createEvent(payload: CreateEventPayload): Observable<CreateEventResponse> {
     return this.http.post<CreateEventResponse>(`${environment.apiUrl}/api/events`, payload);
   }
+
+  deleteEvent(eventId: string, date: string): Observable<{ deleted: boolean; eventId: string }> {
+    const params = new HttpParams().set('date', date);
+    return this.http.delete<{ deleted: boolean; eventId: string }>(
+      `${environment.apiUrl}/api/events/${encodeURIComponent(eventId)}`,
+      { params }
+    );
+  }
 }
