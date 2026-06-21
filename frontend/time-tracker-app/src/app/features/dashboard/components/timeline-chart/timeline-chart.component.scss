@@ -114,8 +114,7 @@
 }
 
 .hour-calendar__bar {
-  display: flex;
-  align-items: stretch;
+  position: relative;
   height: 2.5rem;
   overflow: hidden;
   background: #f3f4f6;
@@ -123,47 +122,61 @@
   border-radius: 8px;
 }
 
-.hour-calendar__segment {
+.hour-calendar__grid {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image: linear-gradient(
+    to right,
+    rgb(229 231 235 / 70%) 1px,
+    transparent 1px
+  );
+  background-size: 50% 100%;
+  background-repeat: no-repeat;
+  background-position: 50% 0;
+  border-right: 1px solid rgb(229 231 235 / 50%);
+}
+
+.hour-calendar__block {
+  position: absolute;
+  box-sizing: border-box;
   display: flex;
   flex-direction: column;
   justify-content: center;
   gap: 0.125rem;
   min-width: 0;
-  padding: 0.25rem 0.5rem;
+  padding: 0.2rem 0.4rem;
   overflow: hidden;
   color: #fff;
   text-align: left;
   border: none;
-  border-right: 1px solid rgb(255 255 255 / 25%);
+  border-radius: 4px;
+  box-shadow: 0 0 0 1px rgb(255 255 255 / 20%);
   cursor: pointer;
   transition: filter 0.15s ease;
 
-  &:last-of-type {
-    border-right: none;
-  }
-
   &:hover {
     filter: brightness(1.06);
-    z-index: 1;
+    z-index: 2;
   }
 }
 
-.hour-calendar__segment--narrow {
+.hour-calendar__block--narrow {
   flex-direction: row;
   align-items: center;
   justify-content: center;
-  padding: 0.25rem;
+  padding: 0.15rem;
 
-  .hour-calendar__segment-label {
+  .hour-calendar__block-label {
     display: none;
   }
 
-  .hour-calendar__segment-duration {
-    font-size: 0.625rem;
+  .hour-calendar__block-duration {
+    font-size: 0.5625rem;
   }
 }
 
-.hour-calendar__segment-label {
+.hour-calendar__block-label {
   font-size: 0.6875rem;
   font-weight: 700;
   line-height: 1.1;
@@ -172,17 +185,18 @@
   text-overflow: ellipsis;
 }
 
-.hour-calendar__segment-duration {
+.hour-calendar__block-duration {
   font-size: 0.625rem;
   font-weight: 500;
   opacity: 0.92;
 }
 
 .hour-calendar__unused {
+  position: absolute;
+  inset: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-  min-width: 0;
   font-size: 0.625rem;
   color: var(--color-text-subtle);
   background: repeating-linear-gradient(
@@ -195,7 +209,7 @@
 }
 
 .hour-calendar__unused--full {
-  flex: 1;
+  z-index: 0;
 }
 
 .hour-calendar__total {

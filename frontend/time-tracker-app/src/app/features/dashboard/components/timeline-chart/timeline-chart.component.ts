@@ -7,6 +7,11 @@ import {
 } from '../../../../core/constants/categories';
 import { ActivityCategory, TimelineBlock, TimelineHour } from '../../../../core/models/timeline.model';
 import { formatDuration, formatHourLabel } from '../../../../core/utils/duration.util';
+import {
+  computeVisibleHourRange,
+  formatDisplayDate,
+  getVisibleHours
+} from '../../utils/dashboard-stats.util';
 
 interface TooltipState {
   category: string;
@@ -17,24 +22,88 @@ interface TooltipState {
   y: number;
 }
 
-export interface HourSegment {
-  category: ActivityCategory;
-  durationSec: number;
-  /** Share of the 60-minute hour (0–100). */
+/** Block positioned within an hour row by clock time (start/end). */
+export interface PositionedBlock {
+  block: TimelineBlock;
+  /** Offset from hour :00 as a percentage of the 60-minute row (0–100). */
+  leftPct: number;
+  /** Width as a percentage of the hour row (0–100). */
   widthPct: number;
-  sampleBlock: TimelineBlock;
+  /** Vertical lane index when blocks overlap in the same hour. */
+  lane: number;
+  /** Total lanes needed for this hour (for equal-height stacking). */
+  laneCount: number;
 }
 
 export interface HourRow {
   hour: number;
   label: string;
   totalTrackedSec: number;
-  segments: HourSegment[];
-  /** Untracked portion of the hour (0–100). */
-  unusedPct: number;
+  blocks: PositionedBlock[];
 }
 
 const SECONDS_PER_HOUR = 3600;
+const MS_PER_HOUR = SECONDS_PER_HOUR * 1000;
+
+/**
+ * Overlapping blocks in the same hour are stacked vertically (calendar-style lanes).
+ * Each lane gets an equal share of the row height; blocks never shrink horizontally.
+ */
+function assignStackLanes(
+  blocks: Omit<PositionedBlock, 'lane' | 'laneCount'>[]
+): PositionedBlock[] {
+  const sorted = [...blocks].sort(
+    (a, b) => a.leftPct - b.leftPct || a.block.start.localeCompare(b.block.start)
+  );
+
+  const laneEnds: number[] = [];
+  const positioned: PositionedBlock[] = [];
+
+  for (const entry of sorted) {
+    let lane = 0;
+    while (lane < laneEnds.length && laneEnds[lane] > entry.leftPct + 0.05) {
+      lane += 1;
+    }
+    if (lane === laneEnds.length) {
+      laneEnds.push(0);
+    }
+    laneEnds[lane] = entry.leftPct + entry.widthPct;
+    positioned.push({ ...entry, lane, laneCount: 0 });
+  }
+
+  const laneCount = Math.max(1, laneEnds.length);
+  return positioned.map((entry) => ({ ...entry, laneCount }));
+}
+
+function blockLayoutInHour(
+  block: TimelineBlock,
+  hour: number,
+  dateStr: string
+): { leftPct: number; widthPct: number } | null {
+  const blockStartMs = new Date(block.start).getTime();
+  const blockEndMs = new Date(block.end).getTime();
+  if (!Number.isFinite(blockStartMs) || !Number.isFinite(blockEndMs) || blockEndMs <= blockStartMs) {
+    return null;
+  }
+
+  const [year, month, day] = dateStr.split('-').map(Number);
+  const hourStartMs = new Date(year, month - 1, day, hour, 0, 0, 0).getTime();
+  const hourEndMs = hourStartMs + MS_PER_HOUR;
+
+  const clipStartMs = Math.max(blockStartMs, hourStartMs);
+  const clipEndMs = Math.min(blockEndMs, hourEndMs);
+  if (clipEndMs <= clipStartMs) {
+    return null;
+  }
+
+  const offsetSec = (clipStartMs - hourStartMs) / 1000;
+  const durationSec = (clipEndMs - clipStartMs) / 1000;
+
+  return {
+    leftPct: (offsetSec / SECONDS_PER_HOUR) * 100,
+    widthPct: (durationSec / SECONDS_PER_HOUR) * 100
+  };
+}
 
 @Component({
   selector: 'app-timeline-chart',
@@ -49,48 +118,33 @@ export class TimelineChartComponent {
   readonly categoryLegend = CATEGORY_LEGEND;
   readonly categoryLabels = CATEGORY_LABELS;
 
+  readonly displayTitle = computed(() => formatDisplayDate(this.date()));
+
+  readonly visibleHours = computed(() => {
+    const { startHour, endHour } = computeVisibleHourRange(this.hours(), this.date());
+    return getVisibleHours(this.hours(), startHour, endHour);
+  });
+
   readonly hourRows = computed(() => {
-    const byHour = new Map(this.hours().map((hour) => [hour.hour, hour]));
+    const dateStr = this.date();
     const rows: HourRow[] = [];
 
-    for (let hour = 0; hour <= 23; hour += 1) {
-      const bucket = byHour.get(hour) ?? {
-        hour,
-        label: `${String(hour).padStart(2, '0')}:00`,
-        totalTrackedSec: 0,
-        blocks: []
-      };
+    for (const bucket of this.visibleHours()) {
+      const rawBlocks: Omit<PositionedBlock, 'lane' | 'laneCount'>[] = [];
 
-      const categoryTotals = new Map<ActivityCategory, { durationSec: number; block: TimelineBlock }>();
       for (const block of bucket.blocks) {
-        const existing = categoryTotals.get(block.category);
-        if (existing) {
-          existing.durationSec += block.durationSec;
-        } else {
-          categoryTotals.set(block.category, { durationSec: block.durationSec, block });
+        const layout = blockLayoutInHour(block, bucket.hour, dateStr);
+        if (!layout || layout.widthPct <= 0) {
+          continue;
         }
+        rawBlocks.push({ block, ...layout });
       }
 
-      const segments: HourSegment[] = [...categoryTotals.entries()]
-        .map(([category, { durationSec, block }]) => ({
-          category,
-          durationSec,
-          widthPct: (durationSec / SECONDS_PER_HOUR) * 100,
-          sampleBlock: block
-        }))
-        .sort((a, b) => b.durationSec - a.durationSec);
-
-      const trackedPct = Math.min(
-        100,
-        segments.reduce((sum, segment) => sum + segment.widthPct, 0)
-      );
-
       rows.push({
-        hour,
-        label: formatHourLabel(hour),
+        hour: bucket.hour,
+        label: formatHourLabel(bucket.hour),
         totalTrackedSec: bucket.totalTrackedSec,
-        segments,
-        unusedPct: Math.max(0, 100 - trackedPct)
+        blocks: assignStackLanes(rawBlocks)
       });
     }
 
@@ -117,15 +171,16 @@ export class TimelineChartComponent {
     return CATEGORY_COLORS[category];
   }
 
-  showSegmentTooltip(segment: HourSegment, event: MouseEvent): void {
+  showBlockTooltip(positioned: PositionedBlock, event: MouseEvent): void {
     const target = event.currentTarget as HTMLElement;
     const rect = target.getBoundingClientRect();
+    const { block } = positioned;
 
     this.tooltip.set({
-      category: CATEGORY_LABELS[segment.category],
-      duration: formatDuration(segment.durationSec),
-      activity: segment.sampleBlock.activity,
-      timeRange: this.formatTimeRange(segment.sampleBlock),
+      category: CATEGORY_LABELS[block.category],
+      duration: formatDuration(block.durationSec),
+      activity: block.activity,
+      timeRange: this.formatTimeRange(block),
       x: rect.left + rect.width / 2,
       y: rect.top - 8
     });
@@ -135,7 +190,8 @@ export class TimelineChartComponent {
     this.tooltip.set(null);
   }
 
-  unusedLabel(unusedPct: number): string {
-    return formatDuration(Math.round((unusedPct / 100) * SECONDS_PER_HOUR));
+  blockTrackKey(positioned: PositionedBlock): string {
+    const { block } = positioned;
+    return `${block.start}|${block.end}|${block.activity}|${block.category}`;
   }
 }
