@@ -4,7 +4,7 @@
 
 **Base URL (local):** `http://localhost:4000`  
 **Content-Type:** `application/json` unless noted  
-**Timestamps:** ISO 8601 UTC (`2026-06-20T14:30:00.000Z`) for stored events and timeline blocks. Voice-parsed schedule blocks may use `HH:MM` (24h) when no calendar date is known — see [Schedule block](#schedule-block-voice--ai).
+**Timestamps:** ISO 8601 UTC (`2026-06-20T14:30:00.000Z`) for stored events and timeline blocks. Voice-parsed schedule blocks may use 12-hour `H:MM AM/PM` when no calendar date is known — see [Schedule block](#schedule-block-voice--ai).
 
 ---
 
@@ -108,12 +108,14 @@ Returned by `GET /api/timeline` for the hour-by-hour bar visualization.
 
 ### Schedule block (voice / AI)
 
-Output of transcript parsing. Times are **local wall-clock** `HH:MM` when date is unknown.
+Output of transcript parsing. Times are **local wall-clock** 12-hour labels with AM/PM. Each block includes a calendar **`date`** (`YYYY-MM-DD`); spoken cues like “today”, “tomorrow”, or “Monday” set the date.
 
 ```json
 {
-  "start": "09:00",
-  "end": "10:30",
+  "date": "2026-06-20",
+  "dayLabel": "today",
+  "start": "9:00 AM",
+  "end": "10:30 AM",
   "durationMin": 90,
   "activity": "worked on the dashboard",
   "category": "work",
@@ -121,6 +123,8 @@ Output of transcript parsing. Times are **local wall-clock** `HH:MM` when date i
   "raw": "From 9 to 10:30 I worked on the dashboard"
 }
 ```
+
+Optional request field: `referenceDate` (ISO 8601) — anchor for resolving “today” / “tomorrow” (defaults to server now).
 
 ---
 
@@ -245,7 +249,7 @@ Output of transcript parsing. Times are **local wall-clock** `HH:MM` when date i
 #### `POST /api/schedule/parse`
 
 **Status:** 🟡 On `ai-pipeline` PR #1 (not merged)  
-**Request:** `{ "transcript", "useLLM?": false }`  
+**Request:** `{ "transcript", "useLLM?": false, "referenceDate?": "2026-06-20T00:00:00.000Z" }`  
 **Response:** `{ "blocks": [ Schedule block ] }`
 
 ---

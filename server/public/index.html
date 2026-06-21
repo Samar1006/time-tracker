@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Time Tracker — AI Pipeline Demo</title>
+<title>Time Tracker — Voice Schedule</title>
 <style>
   :root {
     --bg: #0f1220; --card: #1a1f33; --line: #2a3048; --text: #e7ebf5;
@@ -14,120 +14,143 @@
   * { box-sizing: border-box; }
   body {
     margin: 0; font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-    background: var(--bg); color: var(--text); padding: 32px 16px;
+    background: var(--bg); color: var(--text); padding: 28px 16px 48px;
   }
-  .wrap { max-width: 760px; margin: 0 auto; }
-  h1 { font-size: 24px; margin: 0 0 4px; }
-  .sub { color: var(--muted); margin: 0 0 24px; }
+  .wrap { max-width: 640px; margin: 0 auto; display: grid; gap: 16px; }
   textarea {
-    width: 100%; min-height: 110px; resize: vertical; padding: 12px 14px;
+    width: 100%; min-height: 88px; resize: vertical; padding: 12px 14px;
     background: var(--card); color: var(--text); border: 1px solid var(--line);
-    border-radius: 10px; font: inherit;
+    border-radius: 12px; font: inherit;
   }
-  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 12px 0; }
   button {
-    background: var(--accent); color: #fff; border: 0; padding: 10px 18px;
-    border-radius: 9px; font: inherit; font-weight: 600; cursor: pointer;
+    background: var(--accent); color: #fff; border: 0; padding: 12px 20px;
+    border-radius: 12px; font: inherit; font-weight: 600; cursor: pointer;
+    width: fit-content;
   }
-  button.ghost { background: transparent; border: 1px solid var(--line); color: var(--muted); font-weight: 500; }
-  button:disabled { opacity: .5; cursor: default; }
-  label.chk { color: var(--muted); display: inline-flex; gap: 6px; align-items: center; cursor: pointer; }
-  .samples { font-size: 13px; }
-  .blocks { margin-top: 20px; display: grid; gap: 10px; }
+  button.recording { background: #3a2230; color: #ff8b8b; border: 1px solid #5c3040; }
+  .heard {
+    color: var(--muted); font-size: 14px; min-height: 1.4em; padding: 0 2px;
+  }
+  .heard strong { color: var(--text); font-weight: 500; }
+  .day-group { display: grid; gap: 8px; }
+  .day-head {
+    color: var(--muted); font-size: 13px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: .05em; margin-top: 8px;
+  }
+  .blocks { display: grid; gap: 8px; }
   .block {
-    display: grid; grid-template-columns: 92px 1fr auto; gap: 12px; align-items: center;
+    display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: center;
     background: var(--card); border: 1px solid var(--line); border-left: 4px solid var(--accent);
-    border-radius: 10px; padding: 12px 14px;
+    border-radius: 12px; padding: 12px 14px;
   }
-  .time { font-variant-numeric: tabular-nums; color: var(--text); font-weight: 600; }
-  .time small { display: block; color: var(--muted); font-weight: 400; font-size: 12px; }
+  .block-main { display: grid; gap: 4px; }
+  .time { font-variant-numeric: tabular-nums; font-weight: 600; }
+  .dur { color: var(--muted); font-size: 13px; font-weight: 400; }
   .activity { color: var(--text); }
-  .cat { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; padding: 4px 10px; border-radius: 999px; }
-  .empty, .err { color: var(--muted); margin-top: 20px; }
+  .cat {
+    font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em;
+    padding: 4px 10px; border-radius: 999px; white-space: nowrap;
+  }
+  .empty { color: var(--muted); font-size: 14px; }
   .err { color: #ff8b8b; }
-  .foot { margin-top: 28px; color: var(--muted); font-size: 13px; border-top: 1px solid var(--line); padding-top: 14px; }
-  code { background: var(--card); padding: 1px 6px; border-radius: 5px; }
 </style>
 </head>
 <body>
 <div class="wrap">
-  <h1>🕒 Time Tracker — AI Pipeline</h1>
-  <p class="sub">Describe your day in plain language. The AI turns it into a structured schedule and labels each activity.</p>
-
-  <textarea id="transcript" placeholder="e.g. From 9 to 10:30 I worked on the dashboard. Then I had a standup until 11. After lunch around 1pm I answered emails for 30 minutes. At 4 I took a coffee break and browsed youtube."></textarea>
-
-  <div class="row samples">
-    <span style="color:var(--muted)">Try:</span>
-    <button class="ghost" data-sample="workday">a workday</button>
-    <button class="ghost" data-sample="study">a study evening</button>
-    <button class="ghost" data-sample="sparse">no times</button>
-  </div>
-
-  <div class="row">
-    <button id="record" class="ghost">🎤 Record my day</button>
-    <button id="parse">Parse my day →</button>
-    <label class="chk"><input type="checkbox" id="useLLM" /> Use Claude (needs API key)</label>
-  </div>
-  <p id="status" class="empty" style="margin:0"></p>
-
-  <div id="out" class="blocks"></div>
+  <button id="record">🎤 Record</button>
+  <textarea id="transcript" placeholder="Or type an activity and press Enter…"></textarea>
+  <p id="heard" class="heard"></p>
+  <div id="schedule"></div>
   <p id="empty" class="empty">Your schedule will appear here.</p>
-
-  <div class="foot">
-    Type your day, or hit <b>🎤 Record</b> to speak it. Voice uses
-    <code>POST /api/transcribe</code> (Deepgram); parsing uses
-    <code>POST /api/schedule/parse</code>. Recording needs a Deepgram key in
-    <code>server/.env</code>.
-  </div>
 </div>
 
 <script>
-  const SAMPLES = {
-    workday: "From 9 to 10:30 I worked on the frontend dashboard. Then I had a standup until 11. After that I spent two hours debugging the API. After lunch around 1pm I answered emails for 30 minutes. At 4 I took a coffee break and browsed youtube.",
-    study: "At 7pm I read documentation for an hour. Then I watched a tutorial until 9. After that I played a game for 45 minutes.",
-    sparse: "I worked on code, then took a break, then replied to slack.",
-  };
   const CAT_COLORS = {
     work: "var(--work)", communication: "var(--communication)", learning: "var(--learning)",
     entertainment: "var(--entertainment)", break: "var(--break)", uncategorized: "var(--uncategorized)",
   };
 
   const $ = (id) => document.getElementById(id);
-  const ta = $("transcript"), out = $("out"), empty = $("empty"), status = $("status");
+  const ta = $("transcript"), scheduleEl = $("schedule"), empty = $("empty"), heard = $("heard");
+  const recordBtn = $("record");
+  let scheduleBlocks = [];
+  let lastHeard = "";
 
-  document.querySelectorAll("[data-sample]").forEach((b) => {
-    b.onclick = () => { ta.value = SAMPLES[b.dataset.sample]; };
-  });
-
-  function setStatus(msg, isErr) {
-    status.textContent = msg || "";
-    status.className = isErr ? "err" : "empty";
+  function parseTimeSortKey(label) {
+    if (!label) return null;
+    const m = label.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
+    if (!m) return null;
+    let h = parseInt(m[1], 10);
+    const min = parseInt(m[2], 10);
+    if (m[3].toUpperCase() === "PM" && h < 12) h += 12;
+    if (m[3].toUpperCase() === "AM" && h === 12) h = 0;
+    return h * 60 + min;
   }
 
-  async function parseDay() {
-    const transcript = ta.value.trim();
-    out.innerHTML = ""; empty.className = "empty";
-    if (!transcript) { empty.textContent = "Type, record, or pick a sample first."; return; }
+  function sortBlocks(blocks) {
+    return [...blocks].sort((a, b) => {
+      if (a.date !== b.date) return (a.date || "").localeCompare(b.date || "");
+      const am = parseTimeSortKey(a.start);
+      const bm = parseTimeSortKey(b.start);
+      if (am == null && bm == null) return 0;
+      if (am == null) return 1;
+      if (bm == null) return -1;
+      return am - bm;
+    });
+  }
+
+  function formatDayHeading(dateISO, dayLabel) {
+    const d = new Date(`${dateISO}T12:00:00.000Z`);
+    const formatted = d.toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" });
+    if (dayLabel === "today" || dayLabel === "tomorrow" || dayLabel === "yesterday") {
+      return `${dayLabel.charAt(0).toUpperCase() + dayLabel.slice(1)} · ${formatted}`;
+    }
+    return formatted;
+  }
+
+  function setHeard(text, isErr = false) {
+    heard.className = isErr ? "heard err" : "heard";
+    if (!text) { heard.textContent = ""; return; }
+    heard.innerHTML = `Heard: <strong>${escapeHtml(text)}</strong>`;
+  }
+
+  async function addTranscript(transcript, heardText) {
+    const text = transcript.trim();
+    if (!text) return;
     empty.textContent = "Parsing…";
     try {
       const res = await fetch("/api/schedule/parse", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ transcript, useLLM: $("useLLM").checked }),
+        body: JSON.stringify({ transcript: text, referenceDate: new Date().toISOString() }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Request failed");
-      render(data.blocks || []);
+      const newBlocks = data.blocks || [];
+      if (!newBlocks.length) {
+        empty.textContent = "No activities found — try adding times.";
+        return;
+      }
+      scheduleBlocks = sortBlocks([...scheduleBlocks, ...newBlocks]);
+      lastHeard = heardText || text;
+      setHeard(lastHeard);
+      render(scheduleBlocks);
+      ta.value = "";
+      empty.textContent = "";
     } catch (e) {
-      empty.className = "err"; empty.textContent = "Error: " + e.message;
+      empty.className = "empty err";
+      empty.textContent = "Error: " + e.message;
     }
   }
-  $("parse").onclick = parseDay;
 
-  // --- Voice recording: mic -> /api/transcribe -> textarea -> auto-parse ---
+  ta.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      addTranscript(ta.value, ta.value.trim());
+    }
+  });
+
   let recorder = null, chunks = [];
-  const recordBtn = $("record");
-
   recordBtn.onclick = async () => {
     if (recorder && recorder.state === "recording") { recorder.stop(); return; }
     try {
@@ -137,18 +160,18 @@
       recorder.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
       recorder.onstop = () => transcribe(new Blob(chunks, { type: recorder.mimeType }));
       recorder.start();
-      recordBtn.textContent = "⏹ Stop recording";
-      recordBtn.style.color = "#ff8b8b";
-      setStatus("Recording… describe your day, then click Stop.");
+      recordBtn.textContent = "⏹ Stop";
+      recordBtn.classList.add("recording");
+      setHeard("Listening…");
     } catch (e) {
-      setStatus("Mic access denied or unavailable: " + e.message, true);
+      setHeard("Mic unavailable: " + e.message, true);
     }
   };
 
   async function transcribe(blob) {
-    recordBtn.textContent = "🎤 Record my day";
-    recordBtn.style.color = "";
-    setStatus("Transcribing your audio…");
+    recordBtn.textContent = "🎤 Record";
+    recordBtn.classList.remove("recording");
+    setHeard("Transcribing…");
     try {
       const audioBase64 = await blobToBase64(blob);
       const res = await fetch("/api/transcribe", {
@@ -158,40 +181,60 @@
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Transcription failed");
-      ta.value = data.transcript || "";
-      if (!ta.value.trim()) { setStatus("Heard nothing — try again, a bit louder.", true); return; }
-      setStatus('Heard: "' + ta.value + '"  → parsing…');
-      await parseDay();
-      setStatus('Heard: "' + ta.value + '"');
+      const transcript = (data.transcript || "").trim();
+      if (!transcript) { setHeard("Heard nothing — try again.", true); return; }
+      ta.value = transcript;
+      await addTranscript(transcript, transcript);
     } catch (e) {
-      setStatus("Error: " + e.message + " (is DEEPGRAM_API_KEY set in server/.env?)", true);
+      setHeard("Error: " + e.message, true);
     }
   }
 
   function blobToBase64(blob) {
     return new Promise((resolve, reject) => {
       const r = new FileReader();
-      r.onloadend = () => resolve(String(r.result).split(",")[1]); // strip data: prefix
+      r.onloadend = () => resolve(String(r.result).split(",")[1]);
       r.onerror = reject;
       r.readAsDataURL(blob);
     });
   }
 
   function render(blocks) {
-    if (!blocks.length) { empty.textContent = "No activities found — try adding times."; return; }
+    if (!blocks.length) {
+      scheduleEl.innerHTML = "";
+      empty.textContent = "Your schedule will appear here.";
+      return;
+    }
     empty.textContent = "";
-    out.innerHTML = blocks.map((b) => {
-      const color = CAT_COLORS[b.category] || CAT_COLORS.uncategorized;
-      const start = b.start || "—", end = b.end ? "–" + b.end : "";
-      const dur = b.durationMin ? `${b.durationMin} min` : "";
-      return `<div class="block" style="border-left-color:${color}">
-        <div class="time">${start}<small>${end} ${dur}</small></div>
-        <div class="activity">${escapeHtml(b.activity)}</div>
-        <div class="cat" style="background:${color}22;color:${color}">${b.category}</div>
-      </div>`;
+    const byDate = new Map();
+    for (const b of blocks) {
+      const key = b.date || "unknown";
+      if (!byDate.has(key)) byDate.set(key, []);
+      byDate.get(key).push(b);
+    }
+    scheduleEl.innerHTML = [...byDate.entries()].map(([date, dayBlocks]) => {
+      const label = formatDayHeading(date, dayBlocks[0]?.dayLabel);
+      const rows = dayBlocks.map((b) => {
+        const color = CAT_COLORS[b.category] || CAT_COLORS.uncategorized;
+        const timeRange = b.start && b.end ? `${b.start} – ${b.end}` : b.start || b.end || "—";
+        const dur = b.durationMin ? `${b.durationMin} min` : "";
+        return `<div class="block" style="border-left-color:${color}">
+          <div class="block-main">
+            <div class="time">${escapeHtml(timeRange)}${dur ? `<span class="dur"> · ${dur}</span>` : ""}</div>
+            <div class="activity">${escapeHtml(b.activity)}</div>
+          </div>
+          <div class="cat" style="background:${color}22;color:${color}">${b.category}</div>
+        </div>`;
+      }).join("");
+      return `<section class="day-group"><div class="day-head">${escapeHtml(label)}</div><div class="blocks">${rows}</div></section>`;
     }).join("");
   }
-  function escapeHtml(s) { const d = document.createElement("div"); d.textContent = s; return d.innerHTML; }
+
+  function escapeHtml(s) {
+    const d = document.createElement("div");
+    d.textContent = s;
+    return d.innerHTML;
+  }
 </script>
 </body>
 </html>
