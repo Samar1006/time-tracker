@@ -51,15 +51,68 @@ function toMinutes(match, contextPm = false) {
 
 function fmt(minutes) {
   if (minutes == null) return null;
-  const h = Math.floor(minutes / 60) % 24;
-  const m = minutes % 60;
-  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+  const total = ((minutes % (24 * 60)) + 24 * 60) % (24 * 60);
+  let h = Math.floor(total / 60);
+  const m = total % 60;
+  const period = h >= 12 ? 'PM' : 'AM';
+  let displayH = h % 12;
+  if (displayH === 0) displayH = 12;
+  return `${displayH}:${String(m).padStart(2, '0')} ${period}`;
 }
 
-function parseFmt(hhmm) {
-  if (!hhmm) return null;
-  const [h, m] = hhmm.split(':').map(Number);
-  return h * 60 + m;
+function parseFmt(label) {
+  if (!label) return null;
+  const ampm = label.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
+  if (ampm) {
+    let h = parseInt(ampm[1], 10);
+    const m = parseInt(ampm[2], 10);
+    if (ampm[3].toUpperCase() === 'PM' && h < 12) h += 12;
+    if (ampm[3].toUpperCase() === 'AM' && h === 12) h = 0;
+    return h * 60 + m;
+  }
+  const h24 = label.match(/^(\d{1,2}):(\d{2})$/);
+  if (h24) return parseInt(h24[1], 10) * 60 + parseInt(h24[2], 10);
+  return null;
+}
+
+function isDurationToken(seg, index, length) {
+  const before = seg.slice(Math.max(0, index - 5), index).toLowerCase();
+  const after = seg.slice(index + length, index + length + 12).toLowerCase();
+  if (/\bfor\s$/.test(before)) return true;
+  if (/^\s*(?:hours?|hrs?|mins?|minutes?)\b/.test(after)) return true;
+  return false;
+}
+
+// "from 2 to 3 am" — share am/pm across both ends of the range.
+function buildTimeMatch(token, hour, min, ampm) {
+  if (token && /^(noon|midnight)$/i.test(token)) {
+    return [token, token, undefined, undefined, ampm];
+  }
+  return ['', undefined, hour ?? token, min, ampm];
+}
+
+function parseFromToRange(seg, contextPm) {
+  const m = seg.match(
+    /\bfrom\s+((?:noon|midnight)|(\d{1,2})(?::(\d{2}))?\s*(am|pm)?)\s+to\s+((?:noon|midnight)|(\d{1,2})(?::(\d{2}))?\s*(am|pm)?)\b/i,
+  );
+  if (!m) return null;
+
+  const sharedAmpm = (m[4] || m[8] || '').toLowerCase();
+  const start = toMinutes(
+    buildTimeMatch(m[1], m[2], m[3], sharedAmpm || m[4]),
+    contextPm && !sharedAmpm,
+  );
+  const end = toMinutes(
+    buildTimeMatch(m[5], m[6], m[7], sharedAmpm || m[8]),
+    contextPm && !sharedAmpm,
+  );
+  if (start == null || end == null) return null;
+
+  return {
+    start,
+    end,
+    durationMin: end > start ? end - start : null,
+  };
 }
 
 // Extract spoken duration in minutes from a segment (may be partial).
@@ -117,6 +170,7 @@ function cleanActivity(text) {
     .trim();
 
   s = s.replace(/^(?:then|after that|after lunch|next|afterwards)\s+/i, '');
+  s = s.replace(/^(?:i\s+)?(?:will\s+be|will|going\s+to|gonna|'ll)\s+/i, '');
   s = s.replace(/^i\s+/i, '');
   s = s.replace(/^[\s,–-]+|[\s,–-]+$/g, '').trim();
   return s;
@@ -124,7 +178,8 @@ function cleanActivity(text) {
 
 // Pull start/end/duration from one segment before cross-segment inference.
 function parseSegmentTimes(seg, contextPm) {
-  const lower = seg.toLowerCase();
+  const range = parseFromToRange(seg, contextPm);
+  if (range) return range;
 
   // "until 11" / "till 1pm" — end time only
   const untilMatch = seg.match(
@@ -135,15 +190,22 @@ function parseSegmentTimes(seg, contextPm) {
     return { start: null, end, durationMin: null };
   }
 
-  // Collect up to two bare times (from X to Y, or "at 9 ...")
+  // Collect up to two clock times; skip numbers that belong to durations.
   const times = [];
   let rest = seg;
+  let searchFrom = 0;
   while (times.length < 2) {
     const timeRe = new RegExp(TIME_RE.source, 'i');
-    const m = timeRe.exec(rest);
+    const slice = rest.slice(searchFrom);
+    const m = timeRe.exec(slice);
     if (!m) break;
+    const absIndex = searchFrom + m.index;
+    if (isDurationToken(seg, absIndex, m[0].length)) {
+      searchFrom = absIndex + m[0].length;
+      continue;
+    }
     times.push(toMinutes(m, contextPm));
-    rest = rest.slice(m.index + m[0].length);
+    searchFrom = absIndex + m[0].length;
   }
 
   let start = times[0] ?? null;
@@ -283,8 +345,8 @@ const BLOCKS_SCHEMA = {
       items: {
         type: 'object',
         properties: {
-          start: { type: 'string', description: '24-hour HH:MM, or "" if unknown' },
-          end: { type: 'string', description: '24-hour HH:MM, or "" if unknown' },
+          start: { type: 'string', description: '12-hour time like "9:00 AM", or "" if unknown' },
+          end: { type: 'string', description: '12-hour time like "10:30 AM", or "" if unknown' },
           activity: { type: 'string', description: 'Short readable activity label' },
           category: {
             type: 'string',
@@ -319,7 +381,9 @@ export async function refineWithLLM(transcript, fallback) {
         'You extract a daily schedule from a spoken transcript of someone ' +
         'describing how they spent their time. Produce one block per distinct ' +
         'activity segment (split on "then", "after that", "after lunch", etc.). ' +
-        'Use 24-hour HH:MM times; use an empty string for any time you cannot infer. ' +
+        'Use 12-hour times with AM/PM (e.g. "9:00 AM", "2:00 PM"); use an empty string for any time you cannot infer. ' +
+        'When someone says "at 6 am for 3 hours", the block runs 6:00 AM to 9:00 AM. ' +
+        'When they say "from 2 to 3 am", both times are AM. ' +
         'Infer missing start times from the previous activity end when reasonable. ' +
         'Activity labels should be short, natural, and readable (e.g. "Worked on the dashboard", ' +
         '"Standup meeting", "Answered emails"). Do not strip verbs or produce fragments.\n\n' +
@@ -332,15 +396,13 @@ export async function refineWithLLM(transcript, fallback) {
     if (!Array.isArray(parsed.blocks) || parsed.blocks.length === 0) return fallback;
 
     const blocks = parsed.blocks.map((b) => {
-      const start = b.start || null;
-      const end = b.end || null;
-      const startMin = parseFmt(start);
-      const endMin = parseFmt(end);
+      const startMin = parseFmt(b.start);
+      const endMin = parseFmt(b.end);
       const durationMin =
         startMin != null && endMin != null ? endMin - startMin : null;
       const block = {
-        start,
-        end,
+        start: fmt(startMin),
+        end: fmt(endMin),
         durationMin,
         activity: b.activity || '(unspecified)',
         category: b.category || 'uncategorized',

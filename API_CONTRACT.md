@@ -4,7 +4,7 @@
 
 **Base URL (local):** `http://localhost:4000`  
 **Content-Type:** `application/json` unless noted  
-**Timestamps:** ISO 8601 UTC (`2026-06-20T14:30:00.000Z`) for stored events and timeline blocks. Voice-parsed schedule blocks may use `HH:MM` (24h) when no calendar date is known — see [Schedule block](#schedule-block-voice--ai).
+**Timestamps:** ISO 8601 UTC (`2026-06-20T14:30:00.000Z`) for stored events and timeline blocks. Voice-parsed schedule blocks may use 12-hour `H:MM AM/PM` when no calendar date is known — see [Schedule block](#schedule-block-voice--ai).
 
 ---
 
@@ -108,12 +108,12 @@ Returned by `GET /api/timeline` for the hour-by-hour bar visualization.
 
 ### Schedule block (voice / AI)
 
-Output of transcript parsing. Times are **local wall-clock** `HH:MM` when date is unknown.
+Output of transcript parsing. Times are **local wall-clock** 12-hour labels with AM/PM when date is unknown.
 
 ```json
 {
-  "start": "09:00",
-  "end": "10:30",
+  "start": "9:00 AM",
+  "end": "10:30 AM",
   "durationMin": 90,
   "activity": "worked on the dashboard",
   "category": "work",

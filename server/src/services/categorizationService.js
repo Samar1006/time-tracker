@@ -37,7 +37,7 @@ export const CATEGORIES = {
   },
   break: {
     keywords: ['break', 'lunch', 'coffee', 'rest', 'walk', 'snack', 'gym',
-      'workout', 'nap', 'relax'],
+      'workout', 'work out', 'running', 'jogging', 'exercise', 'nap', 'relax'],
     domains: [],
   },
 };
@@ -88,9 +88,9 @@ export function categorizeText(text) {
     hits[category] = [];
     for (const kw of cfg.keywords) {
       if (haystack.includes(kw)) {
-        scores[category] = (scores[category] || 0) + 1;
+        scores[category] = (scores[category] || 0) + kw.length;
         hits[category].push(kw);
-        total += 1;
+        total += kw.length;
       }
     }
   }

@@ -75,7 +75,7 @@ The demo user's `userId` matches the timeline API (`GET /api/timeline?userId=use
 
 ### Schedule block shape
 ```json
-{ "start": "09:00", "end": "10:30", "durationMin": 90,
+{ "start": "9:00 AM", "end": "10:30 AM", "durationMin": 90,
   "activity": "worked on the dashboard", "category": "work",
   "confidence": 0.6, "raw": "From 9 to 10:30 I worked on the dashboard" }
 ```
