@@ -62,46 +62,14 @@
         </h2>
 
         @if (period() === 'day') {
-          <div class="stats-day-nav">
-            <button
-              type="button"
-              class="stats-day-nav__btn"
-              aria-label="Previous day"
-              (click)="previousDay()"
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                <polyline points="15 18 9 12 15 6" />
-              </svg>
-            </button>
-
-            <label class="stats-day-nav__picker">
-              <span class="stats-day-nav__picker-label">{{ selectedDayLabel() }}</span>
-              <input
-                class="stats-day-nav__input"
-                type="date"
-                [value]="selectedDay()"
-                (change)="onDateInput($event)"
-                aria-label="Choose date"
-              />
-            </label>
-
-            <button
-              type="button"
-              class="stats-day-nav__btn"
-              aria-label="Next day"
-              (click)="nextDay()"
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                <polyline points="9 18 15 12 9 6" />
-              </svg>
-            </button>
-
-            @if (!isSelectedToday()) {
-              <button type="button" class="stats-day-nav__today" (click)="goToToday()">
-                Today
-              </button>
-            }
-          </div>
+          <app-day-date-nav
+            [date]="selectedDay()"
+            [activityTotalsByDate]="activityTotalsByDate()"
+            [showTodayButton]="true"
+            (prevDay)="previousDay()"
+            (nextDay)="nextDay()"
+            (selectDate)="selectDay($event)"
+          />
         }
       </div>
 
