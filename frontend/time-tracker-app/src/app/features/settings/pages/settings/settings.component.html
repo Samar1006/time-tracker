@@ -63,4 +63,35 @@
       </div>
     </form>
   </section>
+
+  <section class="settings-panel settings-panel--sentry">
+    <h2 class="settings-panel__title">Sentry error monitoring</h2>
+    <p class="settings-panel__hint">
+      Errors from this app are reported to Sentry. Use the button below to send a test error and
+      verify your email alert rule.
+    </p>
+    @if (userId(); as currentUser) {
+      <p class="settings-panel__hint">
+        Logged in as <strong>{{ currentUser.email }}</strong> — user context is attached to Sentry
+        events.
+      </p>
+    }
+    <button
+      type="button"
+      class="settings-actions__primary"
+      [disabled]="sending()"
+      (click)="sendTestError()"
+    >
+      {{ sending() ? 'Sending…' : 'Send test error to Sentry' }}
+    </button>
+    @if (testSent()) {
+      <p class="settings-sentry-success" role="status">
+        Test error sent. Open
+        <a href="https://csuf-f6.sentry.io/issues/" target="_blank" rel="noopener noreferrer">
+          Sentry Issues
+        </a>
+        and check your inbox if your alert rule is configured.
+      </p>
+    }
+  </section>
 </app-shell>

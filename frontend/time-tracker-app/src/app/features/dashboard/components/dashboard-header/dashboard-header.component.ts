@@ -1,11 +1,12 @@
 import { Component, inject } from '@angular/core';
-import { Router } from '@angular/router';
+import { Router, RouterLink } from '@angular/router';
 
 import { AuthService } from '../../../../core/services/auth.service';
 import { ThemeService } from '../../../../core/services/theme.service';
 
 @Component({
   selector: 'app-dashboard-header',
+  imports: [RouterLink],
   templateUrl: './dashboard-header.component.html',
   styleUrl: './dashboard-header.component.scss'
 })

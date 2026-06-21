@@ -11,6 +11,7 @@ import {
   LoginRequest,
   SignupRequest
 } from '../models/auth.model';
+import { SentryService } from './sentry.service';
 
 const TOKEN_KEY = 'time-tracker-token';
 const USER_KEY = 'time-tracker-user';
@@ -18,6 +19,7 @@ const USER_KEY = 'time-tracker-user';
 @Injectable({ providedIn: 'root' })
 export class AuthService {
   private readonly http = inject(HttpClient);
+  private readonly sentry = inject(SentryService);
 
   readonly user = signal<AuthUser | null>(this.readStoredUser());
 
@@ -52,6 +54,7 @@ export class AuthService {
   restoreSession(): Observable<void> {
     const token = this.getToken();
     if (!token) {
+      this.sentry.syncUser(null);
       return of(undefined);
     }
 
@@ -60,6 +63,7 @@ export class AuthService {
         const mapped = this.mapUser(user);
         sessionStorage.setItem(USER_KEY, JSON.stringify(mapped));
         this.user.set(mapped);
+        this.sentry.syncUser(mapped);
       }),
       catchError(() => {
         this.clearSession();
@@ -95,6 +99,7 @@ export class AuthService {
     sessionStorage.setItem(TOKEN_KEY, response.token);
     sessionStorage.setItem(USER_KEY, JSON.stringify(mapped));
     this.user.set(mapped);
+    this.sentry.syncUser(mapped);
     return mapped;
   }
 
@@ -124,5 +129,6 @@ export class AuthService {
     sessionStorage.removeItem(TOKEN_KEY);
     sessionStorage.removeItem(USER_KEY);
     this.user.set(null);
+    this.sentry.syncUser(null);
   }
 }

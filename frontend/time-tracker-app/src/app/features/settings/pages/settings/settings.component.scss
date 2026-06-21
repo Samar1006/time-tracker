@@ -149,3 +149,17 @@
     background: var(--color-app-bg);
   }
 }
+
+.settings-panel--sentry {
+  margin-top: 1.5rem;
+}
+
+.settings-sentry-success {
+  margin: 1rem 0 0;
+  font-size: 0.875rem;
+  color: #047857;
+
+  a {
+    color: var(--color-primary);
+  }
+}
