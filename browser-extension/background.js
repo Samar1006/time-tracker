@@ -5,12 +5,20 @@ const FLUSH_ALARM = 'flush-session';
 const QUEUE_KEY = 'pendingEvents';
 const MAX_QUEUE = 200;
 
+/** Never track local dev URLs — keeps demo timeline clean while recording on localhost. */
+const IGNORED_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
+
 /** @type {{ url: string, domain: string | null, title: string, startedAt: number } | null} */
 let currentSession = null;
+
+function isIgnoredHost(hostname) {
+  return IGNORED_HOSTS.has(String(hostname).toLowerCase().replace(/^www\./, ''));
+}
 
 function normalizeDomain(url) {
   try {
     const hostname = new URL(url).hostname.toLowerCase();
+    if (isIgnoredHost(hostname)) return null;
     return hostname.replace(/^www\./, '');
   } catch {
     return null;
@@ -19,9 +27,16 @@ function normalizeDomain(url) {
 
 function isTrackableUrl(url) {
   if (!url) return false;
-  return !['chrome:', 'chrome-extension:', 'edge:', 'about:', 'devtools:'].some((p) =>
+  if (['chrome:', 'chrome-extension:', 'edge:', 'about:', 'devtools:'].some((p) =>
     url.startsWith(p),
-  );
+  )) {
+    return false;
+  }
+  try {
+    return !isIgnoredHost(new URL(url).hostname);
+  } catch {
+    return false;
+  }
 }
 
 function localDateKey(ms) {
