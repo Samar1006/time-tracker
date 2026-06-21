@@ -4,24 +4,16 @@
   } @else if (error()) {
     <p class="dashboard-status dashboard-status--error">{{ error() }}</p>
   } @else {
-    <section class="dashboard-stats">
-      <app-stat-card label="Total tracked" [value]="stats().totalTracked" icon="clock" />
-      <app-stat-card
-        label="Most active"
-        [value]="stats().mostActiveCategory + ' · ' + stats().mostActiveDuration"
-        icon="chart"
-      />
-      <app-stat-card label="Top app" [value]="stats().topApp" icon="star" />
-    </section>
-
     <div class="dashboard-timeline-wrap">
       <app-timeline-chart
         [hours]="dayHours()"
         [date]="selectedDate()"
         [timezone]="timeline()?.timezone ?? 'UTC'"
+        [patchError]="patchError()"
         (prevDay)="previousDay()"
         (nextDay)="nextDay()"
         (selectDate)="selectDate($event)"
+        (eventTimeChange)="onEventTimeChange($event)"
       />
 
       <button
@@ -58,6 +50,9 @@
       }
       @if (voiceError()) {
         <p class="dashboard-voice-heard dashboard-voice-error">{{ voiceError() }}</p>
+      }
+      @if (patchError()) {
+        <p class="dashboard-voice-heard dashboard-voice-error">{{ patchError() }}</p>
       }
     </div>
   }

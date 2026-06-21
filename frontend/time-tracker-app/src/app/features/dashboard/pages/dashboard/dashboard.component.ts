@@ -16,10 +16,8 @@ import { AuthService } from '../../../../core/services/auth.service';
 import { TimelineService } from '../../../../core/services/timeline.service';
 import { VoiceLogService } from '../../../../core/services/voice-log.service';
 import { AppShellComponent } from '../../../../shared/layouts/app-shell/app-shell.component';
-import { StatCardComponent } from '../../components/stat-card/stat-card.component';
 import { TimelineChartComponent } from '../../components/timeline-chart/timeline-chart.component';
 import {
-  computeDashboardStats,
   getVisibleHours,
   shiftDate,
   toDateInputValue
@@ -30,11 +28,7 @@ const REFRESH_MS = 60_000;
 
 @Component({
   selector: 'app-dashboard',
-  imports: [
-    AppShellComponent,
-    StatCardComponent,
-    TimelineChartComponent
-  ],
+  imports: [AppShellComponent, TimelineChartComponent],
   templateUrl: './dashboard.component.html',
   styleUrl: './dashboard.component.scss'
 })
@@ -48,7 +42,9 @@ export class DashboardComponent {
   readonly error = signal<string | null>(null);
   readonly lastHeard = signal<string | null>(null);
   readonly voiceError = signal<string | null>(null);
+  readonly patchError = signal<string | null>(null);
   private readonly reloadTick = signal(0);
+  private readonly softRefresh = signal(false);
 
   private readonly dashboardState = toSignal(
     combineLatest([
@@ -63,11 +59,14 @@ export class DashboardComponent {
         )
       ),
       switchMap(({ date, userId }) => {
-        this.loading.set(true);
+        if (!this.softRefresh()) {
+          this.loading.set(true);
+        }
         this.error.set(null);
 
         if (!userId) {
           this.loading.set(false);
+          this.softRefresh.set(false);
           return of({ timeline: null });
         }
 
@@ -82,7 +81,10 @@ export class DashboardComponent {
             }
             return { timeline };
           }),
-          finalize(() => this.loading.set(false))
+          finalize(() => {
+            this.loading.set(false);
+            this.softRefresh.set(false);
+          })
         );
       })
     ),
@@ -93,20 +95,6 @@ export class DashboardComponent {
 
   readonly timeline = computed(() => this.dashboardState().timeline);
   readonly userId = computed(() => this.auth.user()?.userId ?? null);
-
-  readonly stats = computed(() => {
-    const current = this.timeline();
-    if (!current) {
-      return {
-        totalTracked: '—',
-        mostActiveCategory: '—',
-        mostActiveDuration: '—',
-        topApp: '—'
-      };
-    }
-
-    return computeDashboardStats(current);
-  });
 
   readonly dayHours = computed(() => {
     const current = this.timeline();
@@ -123,6 +111,25 @@ export class DashboardComponent {
 
   selectDate(date: string): void {
     this.selectedDate.set(date);
+  }
+
+  onEventTimeChange(patch: EventTimePatch): void {
+    this.patchError.set(null);
+    this.softRefresh.set(true);
+
+    this.timelineService
+      .updateEvent(patch.eventId, {
+        timestamp: patch.timestamp,
+        durationSec: patch.durationSec,
+        metadata: patch.metadata
+      })
+      .subscribe({
+        next: () => this.reloadTick.update((n) => n + 1),
+        error: () => {
+          this.softRefresh.set(false);
+          this.patchError.set('Could not save timeline change. Your edit was reverted.');
+        }
+      });
   }
 
   async onVoiceLog(): Promise<void> {
