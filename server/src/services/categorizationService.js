@@ -36,13 +36,30 @@ export const CATEGORIES = {
       'x.com', 'instagram.com', 'tiktok.com', 'spotify.com'],
   },
   break: {
-    keywords: ['break', 'lunch', 'coffee', 'rest', 'walk', 'snack', 'gym',
-      'workout', 'work out', 'running', 'run', 'jogging', 'exercise', 'nap', 'relax'],
+    keywords: ['break', 'lunch', 'coffee', 'rest', 'walk', 'snack', 'nap', 'relax',
+      'workout', 'work out', 'running', 'jogging', 'exercise'],
     domains: [],
   },
 };
 
 const UNKNOWN = { category: 'uncategorized', confidence: 0, method: 'none', matched: [] };
+
+// Strong phrase matches beat generic keyword overlap (e.g. study vs break).
+const PHRASE_RULES = [
+  [/\bcoffee\s+break\b/, 'break'],
+  [/\blunch\s+break\b/, 'break'],
+  [/\b(?:study|studying|homework|revision)\b/, 'learning'],
+  [/\b(?:run|running|jog|jogging)\b/, 'break'],
+  [/\b(?:workout|gym)\b/, 'break'],
+  [/\b(?:standup|stand-up|stand up)\b/, 'communication'],
+  [/\b(?:answered\s+)?emails?\b/, 'communication'],
+  [/\b(?:youtube|netflix|reddit)\b/, 'entertainment'],
+];
+
+function keywordMatches(haystack, kw) {
+  if (kw.includes(' ')) return haystack.includes(kw);
+  return haystack.includes(` ${kw.trim()} `);
+}
 
 // Normalize "https://www.YouTube.com/watch?v=.." -> "youtube.com"
 export function normalizeDomain(input) {
@@ -81,13 +98,33 @@ export function categorizeText(text) {
   if (!text || !text.trim()) return { ...UNKNOWN };
   const haystack = ' ' + text.toLowerCase() + ' ';
 
+  if (/\band\b/.test(haystack)) {
+    const parts = text.split(/\band\b/i).map((s) => s.trim()).filter(Boolean);
+    if (parts.length > 1) {
+      const results = parts.map((p) => categorizeText(p));
+      const ranked = results.filter((r) => r.category !== 'uncategorized');
+      if (ranked.length) return ranked[ranked.length - 1];
+    }
+  }
+
+  for (const [pattern, category] of PHRASE_RULES) {
+    if (pattern.test(haystack)) {
+      return {
+        category,
+        confidence: 0.9,
+        method: 'phrase',
+        matched: [String(pattern)],
+      };
+    }
+  }
+
   const scores = {};
   const hits = {};
   let total = 0;
   for (const [category, cfg] of Object.entries(CATEGORIES)) {
     hits[category] = [];
     for (const kw of cfg.keywords) {
-      if (haystack.includes(kw)) {
+      if (keywordMatches(haystack, kw)) {
         scores[category] = (scores[category] || 0) + kw.length;
         hits[category].push(kw);
         total += kw.length;

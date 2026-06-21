@@ -108,10 +108,12 @@ Returned by `GET /api/timeline` for the hour-by-hour bar visualization.
 
 ### Schedule block (voice / AI)
 
-Output of transcript parsing. Times are **local wall-clock** 12-hour labels with AM/PM when date is unknown.
+Output of transcript parsing. Times are **local wall-clock** 12-hour labels with AM/PM. Each block includes a calendar **`date`** (`YYYY-MM-DD`); spoken cues like “today”, “tomorrow”, or “Monday” set the date.
 
 ```json
 {
+  "date": "2026-06-20",
+  "dayLabel": "today",
   "start": "9:00 AM",
   "end": "10:30 AM",
   "durationMin": 90,
@@ -121,6 +123,8 @@ Output of transcript parsing. Times are **local wall-clock** 12-hour labels with
   "raw": "From 9 to 10:30 I worked on the dashboard"
 }
 ```
+
+Optional request field: `referenceDate` (ISO 8601) — anchor for resolving “today” / “tomorrow” (defaults to server now).
 
 ---
 
@@ -245,7 +249,7 @@ Output of transcript parsing. Times are **local wall-clock** 12-hour labels with
 #### `POST /api/schedule/parse`
 
 **Status:** 🟡 On `ai-pipeline` PR #1 (not merged)  
-**Request:** `{ "transcript", "useLLM?": false }`  
+**Request:** `{ "transcript", "useLLM?": false, "referenceDate?": "2026-06-20T00:00:00.000Z" }`  
 **Response:** `{ "blocks": [ Schedule block ] }`
 
 ---

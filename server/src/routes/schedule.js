@@ -175,12 +175,73 @@ function extractDurationMinutes(text) {
   return mins > 0 ? mins : null;
 }
 
+const WEEKDAY_NAMES = {
+  sunday: 0, sun: 0, monday: 1, mon: 1, tuesday: 2, tue: 2, tues: 2,
+  wednesday: 3, wed: 3, thursday: 4, thu: 4, thur: 4, thurs: 4,
+  friday: 5, fri: 5, saturday: 6, sat: 6,
+};
+
+const WEEKDAY_RE =
+  'monday|tuesday|wednesday|thursday|friday|saturday|sunday|mon|tue|tues|wed|thu|thur|thurs|fri|sat|sun';
+
 // Split a transcript into clause-ish segments we can label individually.
 function segment(transcript) {
   return transcript
-    .split(/(?:\.|;|\bthen\b|\bafter that\b|\bnext\b|\bafterwards\b)/i)
+    .split(
+      new RegExp(
+        String.raw`(?:\.|;|\bthen\b|\bafter that\b|\bafterwards\b|\bnext\b(?!\s+(?:${WEEKDAY_RE}|week)))`,
+        'i',
+      ),
+    )
     .map((s) => s.trim())
     .filter(Boolean);
+}
+
+export function toDateISO(date) {
+  return new Date(date).toISOString().slice(0, 10);
+}
+
+export function addDays(date, days) {
+  const base = new Date(`${toDateISO(date)}T12:00:00.000Z`);
+  base.setUTCDate(base.getUTCDate() + days);
+  return base;
+}
+
+function weekdayToDate(referenceDate, weekdayNum, forceNext = false) {
+  const ref = new Date(`${toDateISO(referenceDate)}T12:00:00.000Z`);
+  let delta = (weekdayNum - ref.getUTCDay() + 7) % 7;
+  if (delta === 0 && forceNext) delta = 7;
+  return toDateISO(addDays(ref, delta));
+}
+
+export function resolveDayFromSegment(seg, referenceDate, contextDateISO) {
+  const lower = seg.toLowerCase();
+
+  if (/\btoday\b/.test(lower)) {
+    return { date: toDateISO(referenceDate), dayLabel: 'today' };
+  }
+  if (/\btomorrow\b/.test(lower)) {
+    return { date: toDateISO(addDays(referenceDate, 1)), dayLabel: 'tomorrow' };
+  }
+  if (/\byesterday\b/.test(lower)) {
+    return { date: toDateISO(addDays(referenceDate, -1)), dayLabel: 'yesterday' };
+  }
+
+  const weekdayMatch = lower.match(
+    new RegExp(`\\b(?:on\\s+)?(next\\s+)?(${WEEKDAY_RE})\\b`, 'i'),
+  );
+  if (weekdayMatch) {
+    const forceNext = Boolean(weekdayMatch[1]);
+    const weekdayNum = WEEKDAY_NAMES[weekdayMatch[2].toLowerCase()];
+    if (weekdayNum != null) {
+      return {
+        date: weekdayToDate(referenceDate, weekdayNum, forceNext),
+        dayLabel: weekdayMatch[2].toLowerCase(),
+      };
+    }
+  }
+
+  return { date: contextDateISO, dayLabel: null };
 }
 
 function marksAfternoon(text) {
@@ -210,6 +271,10 @@ function cleanActivity(text) {
     .replace(TIME_RE_G, '')
     .replace(/\b(?:until|till|from|to|around|about|at)\b/gi, ' ')
     .replace(/\b(?:i'll|i'll|i\s+will\s+be|i\s+will|will\s+be|will|going\s+to|gonna)\s+/gi, ' ')
+    .replace(
+      new RegExp(`\\b(?:today|tomorrow|yesterday|next\\s+(?:${WEEKDAY_RE}|week)|on\\s+(?:${WEEKDAY_RE}))\\b`, 'gi'),
+      ' ',
+    )
     .replace(/\b(?:i\s+)?spent\s+/gi, '')
     .replace(/\b(am|pm)\b/gi, '')
     .replace(/\b(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\b/gi, ' ')
@@ -278,15 +343,15 @@ function parseSegmentTimes(seg, contextPm) {
 
 // Fill gaps using prior block end, lunch context, and trailing durations.
 function inferMissingTimes(blocks) {
-  let prevEnd = null;
+  const prevEndByDate = new Map();
 
   for (const block of blocks) {
-    const lower = block.raw.toLowerCase();
+    const dateKey = block.date;
     let startMin = parseFmt(block.start);
     let endMin = parseFmt(block.end);
     let duration = block.durationMin;
+    let prevEnd = prevEndByDate.get(dateKey) ?? null;
 
-    // "after lunch" with no clock time → assume ~1pm start
     if (/\bafter lunch\b/i.test(block.raw) && startMin == null) {
       startMin = 13 * 60;
     }
@@ -309,7 +374,6 @@ function inferMissingTimes(blocks) {
     block.durationMin =
       startMin != null && endMin != null ? endMin - startMin : duration;
 
-    // "until 9" after 7pm — bare end hour earlier than start means same-day PM
     if (startMin != null && endMin != null && endMin <= startMin) {
       endMin += 12 * 60;
       block.end = fmt(endMin);
@@ -320,6 +384,8 @@ function inferMissingTimes(blocks) {
     else if (startMin != null && block.durationMin != null) {
       prevEnd = startMin + block.durationMin;
     } else if (startMin != null) prevEnd = startMin;
+
+    prevEndByDate.set(dateKey, prevEnd);
   }
 
   return blocks;
@@ -327,21 +393,27 @@ function inferMissingTimes(blocks) {
 
 // Core heuristic. Walks each segment, extracts a time range when present,
 // labels the activity via the categorization service.
-export function parseTranscript(transcript) {
+export function parseTranscript(transcript, { referenceDate = new Date() } = {}) {
   if (!transcript || !transcript.trim()) return { blocks: [] };
 
   const blocks = [];
   let contextPm = false;
+  let contextDate = toDateISO(referenceDate);
 
   for (const seg of segment(transcript)) {
     if (marksAfternoon(seg)) contextPm = true;
+
+    const day = resolveDayFromSegment(seg, referenceDate, contextDate);
+    contextDate = day.date;
 
     const { start, end, durationMin } = parseSegmentTimes(seg, contextPm);
     const activity = cleanActivity(seg);
     if (!activity && start == null && end == null && !durationMin) continue;
 
-    const label = categorizeText(seg);
+    const label = categorizeText(activity || seg);
     blocks.push({
+      date: day.date,
+      dayLabel: day.dayLabel,
       start: fmt(start),
       end: fmt(end),
       durationMin: durationMin ?? null,
@@ -394,13 +466,14 @@ const BLOCKS_SCHEMA = {
         properties: {
           start: { type: 'string', description: '12-hour time like "9:00 AM", or "" if unknown' },
           end: { type: 'string', description: '12-hour time like "10:30 AM", or "" if unknown' },
+          date: { type: 'string', description: 'Calendar date YYYY-MM-DD for this block' },
           activity: { type: 'string', description: 'Short readable activity label' },
           category: {
             type: 'string',
             enum: ['work', 'communication', 'learning', 'entertainment', 'break', 'uncategorized'],
           },
         },
-        required: ['start', 'end', 'activity', 'category'],
+        required: ['start', 'end', 'date', 'activity', 'category'],
         additionalProperties: false,
       },
     },
@@ -432,6 +505,7 @@ export async function refineWithLLM(transcript, fallback) {
         'When someone says "at 6 am for 3 hours", the block runs 6:00 AM to 9:00 AM. ' +
         'When they say "from 2 to 3 am", both times are AM. ' +
         'Treat spoken number words (one, two, six, etc.) as numeric times and durations. ' +
+        'Each block needs a calendar date (YYYY-MM-DD). Infer today/tomorrow/weekday mentions from the transcript. ' +
         'Infer missing start times from the previous activity end when reasonable. ' +
         'Activity labels should be short, natural, and readable (e.g. "Worked on the dashboard", ' +
         '"Standup meeting", "Answered emails"). Do not strip verbs or produce fragments.\n\n' +
@@ -449,6 +523,8 @@ export async function refineWithLLM(transcript, fallback) {
       const durationMin =
         startMin != null && endMin != null ? endMin - startMin : null;
       const block = {
+        date: b.date || toDateISO(new Date()),
+        dayLabel: null,
         start: fmt(startMin),
         end: fmt(endMin),
         durationMin,
@@ -467,11 +543,15 @@ export async function refineWithLLM(transcript, fallback) {
 }
 
 router.post('/parse', async (req, res) => {
-  const { transcript, useLLM = !!process.env.ANTHROPIC_API_KEY } = req.body ?? {};
+  const { transcript, useLLM = !!process.env.ANTHROPIC_API_KEY, referenceDate } = req.body ?? {};
   if (typeof transcript !== 'string' || !transcript.trim()) {
     return res.status(400).json({ error: 'Body must include a non-empty "transcript" string.' });
   }
-  let result = parseTranscript(transcript);
+  const refDate = referenceDate ? new Date(referenceDate) : new Date();
+  if (Number.isNaN(refDate.getTime())) {
+    return res.status(400).json({ error: 'Invalid referenceDate — use ISO 8601 format.' });
+  }
+  let result = parseTranscript(transcript, { referenceDate: refDate });
   if (useLLM) result = await refineWithLLM(transcript, result);
   res.json(result);
 });
