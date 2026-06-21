@@ -2,116 +2,94 @@
 
 > **All agents:** Read this file and [`API_CONTRACT.md`](API_CONTRACT.md) before starting work. Update your task status when you finish.
 
-**Last foreman check:** 2026-06-21 — all backend + auth merged; frontend integration is next
+**Last foreman check:** 2026-06-21 — PR #5 merged; `dj` = frontend integration branch
 
 ---
 
 ## Team delegation (current sprint)
 
-> **Important:** `ai-pipeline` and `dj` are **merged into `main`**. Do not keep building on those old branch names. Branch fresh from `main`.
+### Frontend team — **`dj` branch** (frontend integration)
+
+> **`dj` is the active frontend branch** — not stale. Rebase onto `main` before opening PR.
+
+**Branch:** `git checkout dj && git pull origin dj && git rebase origin/main`
+
+| Priority | Task | Status |
+|----------|------|--------|
+| P0 | `AuthService` + JWT storage | 🟡 On `dj` (`core/services/auth.service.ts`) |
+| P0 | Dev proxy `/api` → `:4000` | 🟡 On `dj` (`proxy.conf.json`) |
+| P0 | Wire login + signup | 🟡 On `dj` |
+| P1 | Dashboard + timeline chart | 🟡 On `dj` (`features/dashboard/`) |
+| P1 | Auth guard + post-login routing | 🟡 On `dj` (`core/guards/auth.guard.ts`) |
+
+**Before PR:** rebase onto `main` (picks up PR #5 categorizer swap). **Remove `.tmp-gh/`** from branch — accidental gh CLI binary committed.
+
+**Demo credentials:** `demo@timetracker.test` / `Demo1234!` → user ID `user-demo-1`
+
+---
 
 ### Allisonmini — AI follow-ups
 
-**Branch from `main`:** `git checkout main && git pull && git checkout -b ai-followups`
+| Priority | Task | Status |
+|----------|------|--------|
+| P0 | `categoryHint` → `categorizationService` | ✅ Merged ([#5](https://github.com/Samar1006/time-tracker/pull/5)) |
+| P1 | Voice demo page `/demo` | 🟡 PR [#6](https://github.com/Samar1006/time-tracker/pull/6) — **rebase** onto `main` after #5 |
 
-| Priority | Task | Owns | Do NOT touch |
-|----------|------|------|--------------|
-| P0 | Replace `categoryHint` → `categorizationService` in timeline aggregation | `server/src/services/aggregationService.js` | `frontend/`, `auth.js`, `activity.js` |
-| P1 | Voice demo polish: document `/api/transcribe` → `/api/schedule/parse` chain | `server/README.md` | Frontend |
-| P2 | Deepgram live demo error handling | `server/src/app.js` transcribe handler | — |
-
-**Done (on `main`, don't redo):** schedule parse, categorize, transcribe, Deepgram service.
+**Branch:** `voice-demo` for PR #6 only.
 
 ---
 
-### Frontend team — integration + timeline UI
+### Samar / foreman
 
-**Branch from `main`:** `git checkout main && git pull && git checkout -b frontend-integration`
-
-| Priority | Task | Owns | Do NOT touch |
-|----------|------|------|--------------|
-| P0 | `AuthService` → `POST /api/auth/login`, `/signup`, `/me`; store JWT | `frontend/time-tracker-app/src/app/` | `server/` |
-| P0 | Dev proxy: `/api` → `http://localhost:4000` | `frontend/time-tracker-app/angular.json` | — |
-| P0 | Wire login + signup components (remove TODOs) | `login.component.ts`, `signup.component.ts` | — |
-| P1 | Timeline page + hour bar chart | new feature module | — |
-| P1 | Post-login route → timeline (use `user.id` from auth response) | `app.routes.ts` | — |
-| P2 | Google OAuth button | **Skip for hackathon** — no backend support yet | — |
-
-**Demo credentials** (see `server/README.md`):
-- Email: `demo@timetracker.test` / Password: `Demo1234!` / User ID: `user-demo-1`
-
-**Done (on `main`, don't redo):** login/signup UI shell, auth layout.
-
----
-
-### Samar / foreman — integration only
-
-- Keep `API_CONTRACT.md`, `TASKS.md`, `DECISIONS.md` current
-- Track branch health; do not build features unless asked
-- PR review agent handles merge approval
+- Keep docs current; track branch health
+- PR review agent merges PRs
 
 ---
 
 ## Branch status
 
-| Branch | Status | Action |
-|--------|--------|--------|
-| `main` | 🟢 Full backend + auth API + auth UI shell (30 tests) | Everyone branches from here |
-| `ai-pipeline` | ⚪ Merged & deleted | Use `ai-followups` for new AI work |
-| `dj` | ⚪ Merged | Use `frontend-integration` for new frontend work |
-| `ingestion-timeline` | ⚪ Merged & deleted | — |
-| `auth-backend` | ⚪ Merged | Delete local/remote if still around |
+| Branch | vs `main` | PR | Action |
+|--------|-----------|-----|--------|
+| `main` | — | — | 30 tests passing; categorizer swap merged |
+| `dj` | **+1 / −2** | none open yet | Frontend integration — **rebase then PR** |
+| `voice-demo` | +1 / behind | [#6](https://github.com/Samar1006/time-tracker/pull/6) open | Rebase onto `main` |
+| `categorizer-swap` | merged | [#5](https://github.com/Samar1006/time-tracker/pull/5) ✅ | Delete remote branch |
+| `auth-backend`, `ingestion-timeline`, `ai-pipeline` | merged | — | Safe to delete |
 
 ---
 
 ## MVP progress
 
-| # | Task | Owner | Status |
-|---|------|-------|--------|
-| 1 | Activity ingest + Redis | Samar | ✅ `main` |
-| 2 | Timeline API + demo seed | Samar | ✅ `main` |
-| 3 | AI pipeline (schedule, categorize, transcribe) | Allisonmini | ✅ `main` |
-| 4 | JWT auth backend | Samar | ✅ `main` |
-| 5 | Auth UI shell (Angular) | Frontend | ✅ `main` (not wired) |
-| 6 | Wire auth UI → auth API | Frontend | 🔲 `frontend-integration` |
-| 7 | Timeline bar chart | Frontend | 🔲 `frontend-integration` |
-| 8 | `categoryHint` → `categorizationService` | Allisonmini | 🔲 `ai-followups` |
-| 9 | Native tracking | TBD | 🔲 P2 |
+| # | Task | Status |
+|---|------|--------|
+| 1 | Activity ingest + timeline API | ✅ `main` |
+| 2 | AI pipeline | ✅ `main` |
+| 3 | JWT auth backend | ✅ `main` |
+| 4 | Auth UI shell | ✅ `main` |
+| 5 | Categorizer in aggregation | ✅ `main` (PR #5) |
+| 6 | Frontend auth + dashboard wired | 🟡 `dj` branch |
+| 7 | Voice demo page | 🟡 PR #6 |
+| 8 | Native tracking | 🔲 P2 |
 
 ---
 
-## Integration rules (avoid conflicts)
-
-1. **AI teammate** edits only `server/` files they own (aggregation categorization swap, AI docs).
-2. **Frontend teammate** edits only `frontend/time-tracker-app/`.
-3. **Never** change API routes or shapes without updating `API_CONTRACT.md` in the same PR.
-4. **Never** re-scaffold `server/package.json` or `app.js` — both slices already merged.
-
----
-
-## Quick local test
+## How to test full stack (once `dj` rebased & merged)
 
 ```bash
-# Backend
-cd server && npm install && npm run dev   # :4000
+# Terminal 1 — backend
+cd server && npm install && npm run dev    # :4000
 
-# Auth
-curl http://localhost:4000/api/auth/demo-account
-curl -X POST http://localhost:4000/api/auth/login \
-  -H 'Content-Type: application/json' \
-  -d '{"email":"demo@timetracker.test","password":"Demo1234!"}'
-
-# Timeline
-curl "http://localhost:4000/api/timeline?userId=user-demo-1&date=2026-06-20"
-
-# Frontend (UI only — not wired yet)
+# Terminal 2 — frontend (from dj branch)
 cd frontend/time-tracker-app && npm install && npm start   # :4200
+
+# Login at http://localhost:4200/login
+# demo@timetracker.test / Demo1234!
 ```
 
 ---
 
-## Questions for the team
+## Integration rules
 
-1. Frontend owner name for the delegation table?
-2. Should `/api/timeline` require JWT, or keep `userId` query param for hackathon?
-3. Delete stale `auth-backend` branch?
+1. **Frontend** → `dj` branch only (`frontend/time-tracker-app/`)
+2. **AI** → `voice-demo` for PR #6; don't touch frontend
+3. Update `API_CONTRACT.md` if API shapes change
