@@ -421,7 +421,7 @@ export class TimelineChartComponent {
   }
 
   blockIsEditable(block: TimelineBlock): boolean {
-    return Boolean(block.eventId) && block.source !== 'demo';
+    return Boolean(block.eventId) && (block.source === 'voice' || block.source === 'manual');
   }
 
   isDraggingBlock(positioned: PositionedBlock): boolean {

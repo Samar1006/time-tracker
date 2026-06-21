@@ -258,7 +258,9 @@ curl -s -X POST http://localhost:4000/api/events \
 
 **Success:** `200` — `{ "event": { "id", "timestamp", "durationSec", "metadata", ... } }`
 
-**Errors:** `401`, `400` (invalid body), `404` (event not found)
+**Errors:** `401`, `400` (invalid body), `403` (tracked/browser-ingested events are read-only), `404` (event not found)
+
+Only `voice` and `manual` stored events may be updated. Browser extension ingest (`domain_visit`, `app_focus`, etc.) is not editable via drag or this endpoint.
 
 Used by dashboard drag-to-move and resize on timeline blocks with `eventId`.
 
@@ -319,7 +321,9 @@ Used by dashboard drag-to-move and resize on timeline blocks with `eventId`.
 
 **Success:** `200` — `{ "event": StoredEvent }`
 
-**Errors:** `400` (invalid body), `401`, `404` (event not found)
+**Errors:** `400` (invalid body), `401`, `403` (tracked/browser-ingested events are read-only), `404` (event not found)
+
+Only `voice` and `manual` stored events may be updated.
 
 Used by timeline drag-and-resize UI. Does **not** parse natural language — use `POST /api/schedule/mutate` for voice edits.
 

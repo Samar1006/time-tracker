@@ -8,6 +8,7 @@ import {
   parseDateOnly,
 } from './aggregationService.js';
 import { loadEvents, replaceEvent, eventStorageDate, deleteEventEverywhere } from './activityStore.js';
+import { isUserEditableEvent } from './eventEditability.js';
 import { localTimestamp } from '../utils/voiceBlockConversion.js';
 import {
   extractDurationMinutes,
@@ -18,7 +19,6 @@ import {
 } from '../routes/schedule.js';
 
 const MIN_DURATION_SEC = 15 * 60;
-const MUTABLE_TYPES = new Set(['voice', 'manual']);
 const GENERIC_TARGETS = new Set(['it', 'that', 'this', 'the event', 'the block']);
 const MOVE_VERB_RE = /\b(?:move|moved|moving|reschedule|rescheduled|rescheduling|shift|shifted|shifting)\b/;
 const EDIT_VERB_RE = /\b(?:push|move|moved|moving|shift|shorten|extend|cancel|cancelled|canceled|delete|deleted|remove|removed|reschedule|rescheduled|delay|delayed|postpone|postponed)\b/;
@@ -276,7 +276,7 @@ async function clearMutableTimelineEvents(userId, targetDay, timeZone, context =
 }
 
 function scoreEventMatch(event, targetActivity, viewDate, timeZone, context) {
-  if (!MUTABLE_TYPES.has(event.type)) return -1;
+  if (!isUserEditableEvent(event)) return -1;
 
   const label = activityLabel(event).toLowerCase();
   let score = 0;
@@ -447,7 +447,7 @@ async function loadCandidateEvents(userId, viewDate, timeZone, context = null, m
   for (const date of dates) {
     const dayEvents = await loadEvents(userId, date);
     for (const event of dayEvents) {
-      if (!MUTABLE_TYPES.has(event.type)) continue;
+      if (!isUserEditableEvent(event)) continue;
 
       if (context?.lastEventId && event.id === context.lastEventId) {
         byId.set(event.id, { event, storageDate: date });

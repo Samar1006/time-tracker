@@ -263,6 +263,35 @@ describe('activity routes (API contract)', () => {
     assert.equal(block.durationSec, 1800);
   });
 
+  it('PATCH /api/events/:eventId rejects browser-tracked domain_visit events', async () => {
+    const ingest = await request('/api/events', {
+      method: 'POST',
+      headers: bearer(token),
+      body: {
+        timestamp: `${DATE}T14:00:00.000Z`,
+        type: 'domain_visit',
+        app: 'Chrome',
+        domain: 'github.com',
+        durationSec: 600,
+        metadata: { sourceClient: 'chrome-extension', localDate: DATE },
+      },
+    });
+    assert.equal(ingest.status, 201);
+    const eventId = ingest.body.ids[0];
+
+    const patch = await request(`/api/events/${eventId}?timezone=UTC`, {
+      method: 'PATCH',
+      headers: bearer(token),
+      body: {
+        timestamp: `${DATE}T15:00:00.000Z`,
+        durationSec: 600,
+        metadata: { localDate: DATE },
+      },
+    });
+    assert.equal(patch.status, 403);
+    assert.equal(patch.body.code, 'EVENT_NOT_EDITABLE');
+  });
+
   it('DELETE /api/events clears a day', async () => {
     await request('/api/events/seed', {
       method: 'POST',
