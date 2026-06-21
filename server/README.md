@@ -75,6 +75,5 @@ AI / voice (Allison):
 `DEEPGRAM_API_KEY`, `ANTHROPIC_API_KEY`, and `REDIS_URL` are all optional —
 the server degrades to offline behavior when they're absent.
 
-## Follow-up
-
-- Swap Samar's `categoryHint.js` for `categorizationService.js` in aggregation.
+Timeline aggregation labels activities via the shared `categorizationService.js`
+(the earlier `categoryHint.js` placeholder has been removed).
