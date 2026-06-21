@@ -3,12 +3,50 @@
     <div class="timeline-card__heading">
       <app-day-date-nav
         [date]="date()"
+        [accentDateTitle]="true"
         (prevDay)="prevDay.emit()"
         (nextDay)="nextDay.emit()"
         (selectDate)="selectDate.emit($event)"
       />
     </div>
   </header>
+
+  @if (labelingCreate(); as labeling) {
+    <div class="timeline-card__create-prompt" (pointerdown)="$event.stopPropagation()">
+      <label class="timeline-card__create-label" for="create-activity-name">Activity name</label>
+      <input
+        #createLabelInput
+        id="create-activity-name"
+        class="timeline-card__create-input"
+        type="text"
+        [value]="createLabel()"
+        (input)="createLabel.set($any($event.target).value)"
+        (keydown)="onCreateLabelKeydown($event)"
+        (blur)="onCreateLabelBlur()"
+        placeholder="New activity"
+        autocomplete="off"
+      />
+      <span class="timeline-card__create-time">{{ formatCreatePreviewTimeRange(labeling) }}</span>
+      <div class="timeline-card__create-actions">
+        <button
+          type="button"
+          class="timeline-card__create-btn"
+          (mousedown)="$event.preventDefault()"
+          (click)="confirmActivityLabel()"
+        >
+          Add
+        </button>
+        <button
+          type="button"
+          class="timeline-card__create-btn timeline-card__create-btn--ghost"
+          (mousedown)="$event.preventDefault()"
+          (click)="cancelActivityLabel()"
+        >
+          Cancel
+        </button>
+      </div>
+    </div>
+  }
 
   <div class="day-calendar">
     <div
@@ -31,8 +69,11 @@
 
         <div
           class="day-calendar__canvas"
+          [class.day-calendar__canvas--labeling]="labelingCreate()"
+          #calendarCanvas
           role="list"
           aria-label="Activity timeline"
+          (pointerdown)="onCanvasPointerDown($event)"
         >
           @for (guide of hourGuides(); track guide.hour) {
             <div class="day-calendar__hour-line-wrap" [style.top.%]="guide.topPct">
@@ -116,6 +157,36 @@
                 }
               </button>
             }
+          }
+
+          @if (createPreview(); as preview) {
+            <div
+              class="day-calendar__event day-calendar__event--create-preview"
+              role="presentation"
+              aria-hidden="true"
+              [style.top.%]="preview.previewTopPct"
+              [style.height.%]="preview.previewHeightPct"
+            >
+              <span class="day-calendar__event-title">New activity</span>
+              <span class="day-calendar__event-meta">
+                {{ formatCreatePreviewTimeRange(preview) }}
+              </span>
+            </div>
+          }
+
+          @if (labelingCreate(); as labeling) {
+            <div
+              class="day-calendar__event day-calendar__event--create-label"
+              role="presentation"
+              aria-hidden="true"
+              [style.top.%]="labeling.previewTopPct"
+              [style.height.%]="labeling.previewHeightPct"
+            >
+              <span class="day-calendar__event-title">{{ createLabelDraftTitle() }}</span>
+              <span class="day-calendar__event-meta">
+                {{ formatCreatePreviewTimeRange(labeling) }}
+              </span>
+            </div>
           }
 
           @if (dragPreview(); as preview) {

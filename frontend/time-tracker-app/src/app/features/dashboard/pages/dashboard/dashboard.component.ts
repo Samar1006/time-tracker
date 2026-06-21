@@ -17,7 +17,8 @@ import { TimelineService } from '../../../../core/services/timeline.service';
 import { VoiceLogService } from '../../../../core/services/voice-log.service';
 import { AppShellComponent } from '../../../../shared/layouts/app-shell/app-shell.component';
 import { TimelineChartComponent } from '../../components/timeline-chart/timeline-chart.component';
-import { EventTimePatch } from '../../components/timeline-chart/timeline-drag.util';
+import { EventCreateDraft, EventTimePatch } from '../../components/timeline-chart/timeline-drag.util';
+import { TimelineResponse } from '../../../../core/models/timeline.model';
 import {
   getVisibleHours,
   shiftDate,
@@ -44,8 +45,10 @@ export class DashboardComponent {
   readonly lastHeard = signal<string | null>(null);
   readonly voiceError = signal<string | null>(null);
   readonly patchError = signal<string | null>(null);
+  readonly createBusy = signal(false);
   private readonly reloadTick = signal(0);
   private readonly softRefresh = signal(false);
+  private readonly cachedTimeline = signal<TimelineResponse | null>(null);
 
   private readonly dashboardState = toSignal(
     combineLatest([
@@ -73,14 +76,27 @@ export class DashboardComponent {
 
         return this.timelineService.getTimeline(userId, date).pipe(
           timeout(API_TIMEOUT_MS),
-          catchError(() => of(null)),
-          map((timeline) => {
-            if (!timeline) {
-              this.error.set(
-                'Unable to load timeline. Make sure the server is running on port 4000.'
-              );
+          catchError(() => {
+            if (this.softRefresh() && this.cachedTimeline()) {
+              return of(this.cachedTimeline());
             }
-            return { timeline };
+            return of(null);
+          }),
+          map((timeline) => {
+            if (timeline) {
+              this.cachedTimeline.set(timeline);
+              return { timeline };
+            }
+
+            const cached = this.cachedTimeline();
+            if (cached && this.softRefresh()) {
+              return { timeline: cached };
+            }
+
+            this.error.set(
+              'Unable to load timeline. Make sure the server is running on port 4000.'
+            );
+            return { timeline: null };
           }),
           finalize(() => {
             this.loading.set(false);
@@ -95,10 +111,22 @@ export class DashboardComponent {
   );
 
   readonly timeline = computed(() => this.dashboardState().timeline);
+  readonly displayTimeline = computed(() => {
+    const viewDate = this.selectedDate();
+    const current = this.timeline();
+    if (current?.date === viewDate) {
+      return current;
+    }
+    const cached = this.cachedTimeline();
+    if (cached?.date === viewDate) {
+      return cached;
+    }
+    return current;
+  });
   readonly userId = computed(() => this.auth.user()?.userId ?? null);
 
   readonly dayHours = computed(() => {
-    const current = this.timeline();
+    const current = this.displayTimeline();
     return getVisibleHours(current?.hours ?? [], 0, 23);
   });
 
@@ -131,6 +159,21 @@ export class DashboardComponent {
           this.patchError.set('Could not save timeline change. Your edit was reverted.');
         }
       });
+  }
+
+  onActivityCreate(draft: EventCreateDraft): void {
+    this.patchError.set(null);
+    this.softRefresh.set(true);
+    this.createBusy.set(true);
+
+    this.timelineService.createEvent(draft).subscribe({
+      next: () => this.reloadTick.update((n) => n + 1),
+      error: () => {
+        this.softRefresh.set(false);
+        this.patchError.set('Could not create activity. Try again.');
+      },
+      complete: () => this.createBusy.set(false)
+    });
   }
 
   async onVoiceLog(): Promise<void> {

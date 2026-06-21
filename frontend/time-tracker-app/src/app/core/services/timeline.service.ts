@@ -20,6 +20,19 @@ export interface EventPatchResponse {
   };
 }
 
+export interface CreateEventPayload {
+  timestamp: string;
+  type: string;
+  title: string;
+  durationSec: number;
+  metadata?: Record<string, unknown>;
+}
+
+export interface CreateEventResponse {
+  accepted: number;
+  ids: string[];
+}
+
 @Injectable({ providedIn: 'root' })
 export class TimelineService {
   private readonly http = inject(HttpClient);
@@ -52,5 +65,9 @@ export class TimelineService {
       payload,
       { params }
     );
+  }
+
+  createEvent(payload: CreateEventPayload): Observable<CreateEventResponse> {
+    return this.http.post<CreateEventResponse>(`${environment.apiUrl}/api/events`, payload);
   }
 }

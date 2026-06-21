@@ -1,4 +1,5 @@
 import { TimelineBlock } from '../../../../core/models/timeline.model';
+import { localTimestamp } from '../../../../core/utils/voice-block.util';
 
 export const SNAP_MINUTES = 5;
 export const MIN_DURATION_MINUTES = 5;
@@ -12,6 +13,19 @@ export interface EventTimePatch {
   timestamp: string;
   durationSec: number;
   metadata: { localDate: string; endLocalDate?: string };
+}
+
+export interface EventCreateDraft {
+  timestamp: string;
+  type: 'manual';
+  title: string;
+  durationSec: number;
+  metadata: {
+    category: string;
+    sourceClient: string;
+    localDate: string;
+    endLocalDate?: string;
+  };
 }
 
 /** Round to nearest 5-minute grid (9:07 → 9:05, 9:08 → 9:10). */
@@ -54,6 +68,42 @@ export function clampIntervalToDay(
 export function deltaPxToMinutes(deltaPx: number, canvasHeightPx: number): number {
   if (canvasHeightPx <= 0) return 0;
   return (deltaPx / canvasHeightPx) * MINUTES_PER_DAY;
+}
+
+/** Pointer offset within the day column (px from top) → minutes since midnight. */
+export function offsetYToMinutes(offsetY: number, canvasHeightPx: number): number {
+  if (canvasHeightPx <= 0) return 0;
+  return snapMinutes((offsetY / canvasHeightPx) * MINUTES_PER_DAY);
+}
+
+/** Drag-to-create: anchor + current pointer define the interval (either direction). */
+export function clampCreateDragInterval(
+  anchorMin: number,
+  currentMin: number
+): { startMin: number; endMin: number } {
+  return clampIntervalToDay(Math.min(anchorMin, currentMin), Math.max(anchorMin, currentMin));
+}
+
+export function buildCreateEventDraft(
+  viewDate: string,
+  startMin: number,
+  endMin: number,
+  title = 'New activity'
+): EventCreateDraft {
+  const clamped = clampIntervalToDay(startMin, endMin);
+  const durationSec = Math.round((clamped.endMin - clamped.startMin) * 60);
+
+  return {
+    timestamp: localTimestamp(viewDate, clamped.startMin),
+    type: 'manual',
+    title,
+    durationSec,
+    metadata: {
+      category: 'uncategorized',
+      sourceClient: 'dashboard-drag',
+      localDate: viewDate
+    }
+  };
 }
 
 export function buildEventTimePatch(

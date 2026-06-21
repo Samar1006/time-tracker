@@ -16,9 +16,15 @@
       class="day-date-nav__title-picker"
       [attr.aria-expanded]="calendarOpen()"
       aria-haspopup="dialog"
+      [attr.aria-label]="'Selected date: ' + displayTitle()"
       (click)="toggleCalendar($event)"
     >
-      <span class="day-date-nav__title">{{ displayTitle() }}</span>
+      <span class="day-date-nav__title">
+        @if (isToday()) {
+          <span class="day-date-nav__title-prefix">Today, </span>
+        }
+        <span [class.day-date-nav__title-date]="accentDateTitle()">{{ titleDateLabel() }}</span>
+      </span>
     </button>
 
     @if (calendarOpen()) {
