@@ -64,16 +64,20 @@
   </div>
 
   <div class="row">
+    <button id="record" class="ghost">🎤 Record my day</button>
     <button id="parse">Parse my day →</button>
     <label class="chk"><input type="checkbox" id="useLLM" /> Use Claude (needs API key)</label>
   </div>
+  <p id="status" class="empty" style="margin:0"></p>
 
   <div id="out" class="blocks"></div>
   <p id="empty" class="empty">Your schedule will appear here.</p>
 
   <div class="foot">
-    Powered by <code>POST /api/schedule/parse</code>. Voice input (<code>/api/transcribe</code>)
-    is wired and unlocks once a Deepgram key is set.
+    Type your day, or hit <b>🎤 Record</b> to speak it. Voice uses
+    <code>POST /api/transcribe</code> (Deepgram); parsing uses
+    <code>POST /api/schedule/parse</code>. Recording needs a Deepgram key in
+    <code>server/.env</code>.
   </div>
 </div>
 
@@ -89,16 +93,21 @@
   };
 
   const $ = (id) => document.getElementById(id);
-  const ta = $("transcript"), out = $("out"), empty = $("empty");
+  const ta = $("transcript"), out = $("out"), empty = $("empty"), status = $("status");
 
   document.querySelectorAll("[data-sample]").forEach((b) => {
     b.onclick = () => { ta.value = SAMPLES[b.dataset.sample]; };
   });
 
-  $("parse").onclick = async () => {
+  function setStatus(msg, isErr) {
+    status.textContent = msg || "";
+    status.className = isErr ? "err" : "empty";
+  }
+
+  async function parseDay() {
     const transcript = ta.value.trim();
     out.innerHTML = ""; empty.className = "empty";
-    if (!transcript) { empty.textContent = "Type or pick a sample first."; return; }
+    if (!transcript) { empty.textContent = "Type, record, or pick a sample first."; return; }
     empty.textContent = "Parsing…";
     try {
       const res = await fetch("/api/schedule/parse", {
@@ -112,7 +121,61 @@
     } catch (e) {
       empty.className = "err"; empty.textContent = "Error: " + e.message;
     }
+  }
+  $("parse").onclick = parseDay;
+
+  // --- Voice recording: mic -> /api/transcribe -> textarea -> auto-parse ---
+  let recorder = null, chunks = [];
+  const recordBtn = $("record");
+
+  recordBtn.onclick = async () => {
+    if (recorder && recorder.state === "recording") { recorder.stop(); return; }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      recorder = new MediaRecorder(stream);
+      chunks = [];
+      recorder.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
+      recorder.onstop = () => transcribe(new Blob(chunks, { type: recorder.mimeType }));
+      recorder.start();
+      recordBtn.textContent = "⏹ Stop recording";
+      recordBtn.style.color = "#ff8b8b";
+      setStatus("Recording… describe your day, then click Stop.");
+    } catch (e) {
+      setStatus("Mic access denied or unavailable: " + e.message, true);
+    }
   };
+
+  async function transcribe(blob) {
+    recordBtn.textContent = "🎤 Record my day";
+    recordBtn.style.color = "";
+    setStatus("Transcribing your audio…");
+    try {
+      const audioBase64 = await blobToBase64(blob);
+      const res = await fetch("/api/transcribe", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ audioBase64 }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Transcription failed");
+      ta.value = data.transcript || "";
+      if (!ta.value.trim()) { setStatus("Heard nothing — try again, a bit louder.", true); return; }
+      setStatus('Heard: "' + ta.value + '"  → parsing…');
+      await parseDay();
+      setStatus('Heard: "' + ta.value + '"');
+    } catch (e) {
+      setStatus("Error: " + e.message + " (is DEEPGRAM_API_KEY set in server/.env?)", true);
+    }
+  }
+
+  function blobToBase64(blob) {
+    return new Promise((resolve, reject) => {
+      const r = new FileReader();
+      r.onloadend = () => resolve(String(r.result).split(",")[1]); // strip data: prefix
+      r.onerror = reject;
+      r.readAsDataURL(blob);
+    });
+  }
 
   function render(blocks) {
     if (!blocks.length) { empty.textContent = "No activities found — try adding times."; return; }
