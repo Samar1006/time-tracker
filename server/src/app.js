@@ -3,6 +3,7 @@
 import express from 'express';
 import cors from 'cors';
 import activityRouter from './routes/activity.js';
+import authRouter from './routes/auth.js';
 import scheduleRouter from './routes/schedule.js';
 import { transcribeUrl, transcribeBuffer } from './services/deepgramService.js';
 import { categorizeDomain, categorizeActivity } from './services/categorizationService.js';
@@ -13,6 +14,9 @@ export function createApp() {
   app.use(express.json({ limit: '2mb' }));
 
   app.get('/health', (_req, res) => res.json({ ok: true }));
+
+  // Auth — login, signup, JWT sessions.
+  app.use('/api/auth', authRouter);
 
   // Samar — activity ingestion, storage, hour-by-hour timeline.
   app.use('/api', activityRouter);

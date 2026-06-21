@@ -135,7 +135,44 @@ Output of transcript parsing. Times are **local wall-clock** `HH:MM` when date i
 
 ---
 
-### Activity ingestion (Samar)
+### Auth (login & sessions)
+
+#### `POST /api/auth/login`
+
+**Status:** ✅ Implemented on `auth-backend`  
+**Request:** `{ "email", "password" }`  
+**Success:** `200` — `{ "token", "user": { "id", "email", "fullName" } }`  
+**Errors:** `400`, `401`
+
+#### `POST /api/auth/signup`
+
+**Status:** ✅ Implemented on `auth-backend`  
+**Request:** `{ "fullName", "email", "password" }` (password min 8 chars)  
+**Success:** `201` — `{ "token", "user" }`  
+**Errors:** `400`, `409` (email taken)
+
+#### `GET /api/auth/me`
+
+**Status:** ✅ Implemented on `auth-backend`  
+**Headers:** `Authorization: Bearer <token>`  
+**Success:** `200` — `{ "user": { "id", "email", "fullName" } }`
+
+#### `GET /api/auth/demo-account`
+
+**Status:** ✅ Implemented on `auth-backend`  
+**Success:** `200` — seeded test credentials for local demo
+
+**Demo user (seeded on server start):**
+
+| Field | Value |
+|-------|-------|
+| Email | `demo@timetracker.test` |
+| Password | `Demo1234!` |
+| User ID | `user-demo-1` |
+
+**Env:** `JWT_SECRET` (optional; dev default if unset)
+
+---
 
 #### `POST /api/events`
 
