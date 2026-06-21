@@ -5,6 +5,7 @@ import { firstValueFrom } from 'rxjs';
 import { environment } from '../../../environments/environment';
 import { CategoryContextService } from './category-context.service';
 import { scheduleBlocksToEvents, type ScheduleBlock } from '../utils/voice-block.util';
+import { LiveSpeechRecognition } from '../utils/live-speech-recognition.util';
 
 export interface VoiceLogResult {
   transcript: string;
@@ -43,12 +44,15 @@ export class VoiceLogService {
 
   readonly recording = signal(false);
   readonly busy = signal(false);
+  /** Updates while the mic is open; best-effort via browser SpeechRecognition. */
+  readonly liveTranscript = signal('');
 
   /** Remembers the last voice-created or voice-edited block for follow-up commands. */
   private mutationContext: VoiceMutationContext | null = null;
 
   private recorder: MediaRecorder | null = null;
   private chunks: Blob[] = [];
+  private liveSpeech: LiveSpeechRecognition | null = null;
 
   clearMutationContext(): void {
     this.mutationContext = null;
@@ -71,6 +75,12 @@ export class VoiceLogService {
     };
     this.recorder.start();
     this.recording.set(true);
+    this.liveTranscript.set('');
+
+    this.liveSpeech = new LiveSpeechRecognition((text) => this.liveTranscript.set(text));
+    if (this.liveSpeech.supported) {
+      this.liveSpeech.start();
+    }
   }
 
   private stopAndProcess(selectedDate: string): Promise<VoiceLogResult> {
@@ -82,6 +92,8 @@ export class VoiceLogService {
       }
       rec.onstop = async () => {
         this.recording.set(false);
+        this.liveSpeech?.stop();
+        this.liveSpeech = null;
         this.busy.set(true);
         try {
           const blob = new Blob(this.chunks, { type: rec.mimeType });
@@ -156,6 +168,7 @@ export class VoiceLogService {
           reject(err);
         } finally {
           this.busy.set(false);
+          this.liveTranscript.set('');
         }
       };
       rec.stop();
