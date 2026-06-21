@@ -5,6 +5,16 @@
     <app-dashboard-sidebar />
 
     <main class="dashboard-shell__main">
+      <div class="dashboard-datenav">
+        <button type="button" class="dashboard-datenav__btn" aria-label="Previous day" (click)="previousDay()">
+          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polyline points="15 18 9 12 15 6" /></svg>
+        </button>
+        <span class="dashboard-datenav__label">{{ displayDate() }}</span>
+        <button type="button" class="dashboard-datenav__btn" aria-label="Next day" (click)="nextDay()">
+          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polyline points="9 18 15 12 9 6" /></svg>
+        </button>
+      </div>
+
       @if (loading()) {
         <p class="dashboard-shell__status">Loading timeline…</p>
       } @else if (error()) {
@@ -20,14 +30,29 @@
           <app-stat-card label="Top app" [value]="stats().topApp" icon="star" />
         </section>
 
+        <section class="dashboard-cta">
+          <div class="dashboard-cta__text">
+            <h2 class="dashboard-cta__title">Make a schedule for productivity</h2>
+            <p class="dashboard-cta__sub">
+              Log your day by voice or text and Focusify turns it into your timeline.
+            </p>
+          </div>
+          <button
+            type="button"
+            class="dashboard-cta__btn"
+            [class.dashboard-cta__btn--on]="trackingAllowed()"
+            (click)="allowTracking()"
+          >
+            @if (trackingAllowed()) {
+              ✓ Tracking on
+            } @else {
+              Allow tracking
+            }
+          </button>
+        </section>
+
         <div class="dashboard-timeline-wrap">
-          <app-timeline-chart
-            [hours]="dayHours()"
-            [date]="selectedDate()"
-            (prevDay)="previousDay()"
-            (nextDay)="nextDay()"
-            (selectDate)="selectDate($event)"
-          />
+          <app-timeline-chart [hours]="dayHours()" />
 
           <button
             type="button"

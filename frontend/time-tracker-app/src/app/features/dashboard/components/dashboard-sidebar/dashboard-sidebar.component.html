@@ -1,5 +1,9 @@
 <nav class="dashboard-sidebar" aria-label="Main navigation">
-  <a class="dashboard-sidebar__item dashboard-sidebar__item--active" routerLink="/dashboard" aria-current="page">
+  <a
+    class="dashboard-sidebar__item"
+    routerLink="/dashboard"
+    routerLinkActive="dashboard-sidebar__item--active"
+  >
     <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
       <rect x="3" y="3" width="7" height="7" />
       <rect x="14" y="3" width="7" height="7" />
@@ -8,18 +12,74 @@
     </svg>
     Dashboard
   </a>
-  <span class="dashboard-sidebar__item dashboard-sidebar__item--disabled">
+  <a
+    class="dashboard-sidebar__item"
+    routerLink="/timeline"
+    routerLinkActive="dashboard-sidebar__item--active"
+  >
     <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
       <circle cx="12" cy="12" r="10" />
       <polyline points="12 6 12 12 16 14" />
     </svg>
     Timeline
-  </span>
-  <span class="dashboard-sidebar__item dashboard-sidebar__item--disabled">
+  </a>
+  <a
+    class="dashboard-sidebar__item"
+    routerLink="/history"
+    routerLinkActive="dashboard-sidebar__item--active"
+  >
+    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+      <rect x="3" y="4" width="18" height="18" rx="2" />
+      <line x1="16" y1="2" x2="16" y2="6" />
+      <line x1="8" y1="2" x2="8" y2="6" />
+      <line x1="3" y1="10" x2="21" y2="10" />
+    </svg>
+    History
+  </a>
+  <a
+    class="dashboard-sidebar__item"
+    routerLink="/settings"
+    routerLinkActive="dashboard-sidebar__item--active"
+  >
     <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
       <circle cx="12" cy="12" r="3" />
       <path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42" />
     </svg>
     Settings
-  </span>
+  </a>
+
+  <div class="dashboard-sidebar__section">Apps &amp; Websites</div>
+  <p class="dashboard-sidebar__ai-note">
+    <span class="dashboard-sidebar__ai-badge">AI</span>
+    Auto-tracks the apps &amp; sites you use and sorts them by what you’re doing.
+  </p>
+  @if (apps().length) {
+    <ul class="dashboard-sidebar__apps">
+      @for (app of apps(); track app.name) {
+        <li class="dashboard-sidebar__app">
+          @if (app.logo) {
+            <img
+              class="dashboard-sidebar__app-logo"
+              [src]="app.logo"
+              alt=""
+              width="20"
+              height="20"
+              loading="lazy"
+            />
+          } @else {
+            <span class="dashboard-sidebar__app-dot" [style.background]="color(app.category)"></span>
+          }
+          <span class="dashboard-sidebar__app-info">
+            <span class="dashboard-sidebar__app-name">{{ app.name }}</span>
+            <span class="dashboard-sidebar__app-cat" [style.color]="color(app.category)">
+              {{ app.friendly }}
+            </span>
+          </span>
+          <span class="dashboard-sidebar__app-dur">{{ duration(app.durationSec) }}</span>
+        </li>
+      }
+    </ul>
+  } @else {
+    <p class="dashboard-sidebar__apps-empty">No apps tracked yet.</p>
+  }
 </nav>

@@ -1,0 +1,42 @@
+<div class="dashboard-shell">
+  <app-dashboard-header />
+
+  <div class="dashboard-shell__body">
+    <app-dashboard-sidebar />
+
+    <main class="dashboard-shell__main">
+      <header class="hist-head">
+        <h1 class="hist-title">History</h1>
+        <p class="hist-sub">How your time spending has looked over the last 7 days.</p>
+      </header>
+
+        <section class="hist-card">
+          <ul class="hist-legend">
+            @for (cat of legend; track cat) {
+              <li><span class="hist-legend__dot" [style.background]="color(cat)"></span>{{ label(cat) }}</li>
+            }
+          </ul>
+
+          <div class="hist-chart">
+            @for (day of days(); track day.date) {
+              <div class="hist-col">
+                <div class="hist-bar-area">
+                  <div class="hist-bar" [style.height.%]="day.heightPct">
+                    @for (seg of day.segments; track seg.category) {
+                      <span
+                        class="hist-seg"
+                        [style.height.%]="seg.pct"
+                        [style.background]="color(seg.category)"
+                      ></span>
+                    }
+                  </div>
+                </div>
+                <div class="hist-total">{{ duration(day.totalSec) }}</div>
+                <div class="hist-label">{{ day.label }}</div>
+              </div>
+            }
+          </div>
+        </section>
+    </main>
+  </div>
+</div>

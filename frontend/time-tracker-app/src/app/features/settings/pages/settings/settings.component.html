@@ -1,0 +1,62 @@
+<div class="dashboard-shell">
+  <app-dashboard-header />
+
+  <div class="dashboard-shell__body">
+    <app-dashboard-sidebar />
+
+    <main class="dashboard-shell__main">
+      <header class="set-head">
+        <h1 class="set-title">Settings</h1>
+        <p class="set-sub">Your account and app preferences.</p>
+      </header>
+
+      <div class="set-layout">
+        <div class="set-content">
+          <section class="set-card">
+            <h2 class="set-card__title">Account</h2>
+            <div class="set-account">
+              <div class="set-avatar">{{ initials() }}</div>
+              <div class="set-account__info">
+                <span class="set-account__name">{{ user()?.displayName || 'Unknown user' }}</span>
+                <span class="set-account__email">{{ user()?.email }}</span>
+              </div>
+            </div>
+            <dl class="set-fields">
+              <div class="set-field">
+                <dt>User ID</dt>
+                <dd>{{ user()?.userId }}</dd>
+              </div>
+            </dl>
+            <button type="button" class="set-signout" (click)="signOut()">Sign out</button>
+          </section>
+
+          <section class="set-card">
+            <h2 class="set-card__title">About</h2>
+            <p class="set-about">
+              Time Tracker logs how you spend your day. Capture activities by
+              <strong>voice</strong>, <strong>text</strong>, or <strong>manual entry</strong>,
+              and the app auto-categorizes them into an hour-by-hour timeline.
+            </p>
+            <p class="set-about set-about--muted">
+              Native background tracking for macOS &amp; iOS is on the roadmap.
+            </p>
+          </section>
+        </div>
+
+        <aside class="set-aside">
+          <div class="set-avatar-card">
+            <div class="set-avatar-ring">
+              <img class="set-avatar-img" [src]="avatarSrc" alt="Your avatar" />
+            </div>
+            <span class="set-avatar-name">{{ user()?.displayName || 'You' }}</span>
+            <span class="set-avatar-label">Your avatar</span>
+            <button type="button" class="set-customize" (click)="customize()">Customize</button>
+            @if (customizeNote()) {
+              <p class="set-customize-note">{{ customizeNote() }}</p>
+            }
+          </div>
+        </aside>
+      </div>
+    </main>
+  </div>
+</div>

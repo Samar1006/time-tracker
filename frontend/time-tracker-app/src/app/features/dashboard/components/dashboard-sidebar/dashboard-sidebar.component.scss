@@ -4,7 +4,7 @@
   gap: 0.5rem;
   width: 220px;
   padding: 1.5rem 1rem;
-  background: var(--color-white);
+  background: var(--color-surface);
   border-right: 1px solid var(--color-border);
 }
 
@@ -38,4 +38,116 @@
     border-right: none;
     border-bottom: 1px solid var(--color-border);
   }
+}
+
+.dashboard-sidebar__section {
+  margin: 1.25rem 0 0.5rem;
+  padding: 0 0.75rem;
+  font-size: 0.6875rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--color-text-subtle);
+}
+
+.dashboard-sidebar__apps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+}
+
+.dashboard-sidebar__app {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  border-radius: var(--radius-sm);
+}
+
+.dashboard-sidebar__app:hover {
+  background: var(--color-panel-bg);
+}
+
+.dashboard-sidebar__app-dot {
+  flex-shrink: 0;
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+}
+
+.dashboard-sidebar__app-name {
+  flex: 1;
+  font-size: 0.8125rem;
+  color: var(--color-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dashboard-sidebar__app-dur {
+  font-size: 0.75rem;
+  color: var(--color-text-subtle);
+  font-variant-numeric: tabular-nums;
+}
+
+.dashboard-sidebar__apps-empty {
+  margin: 0;
+  padding: 0.25rem 0.75rem;
+  font-size: 0.8125rem;
+  color: var(--color-text-subtle);
+}
+
+.dashboard-sidebar__ai-note {
+  margin: 0 0 0.5rem;
+  padding: 0 0.75rem;
+  font-size: 0.75rem;
+  line-height: 1.4;
+  color: var(--color-text-muted);
+}
+
+.dashboard-sidebar__ai-badge {
+  display: inline-block;
+  margin-right: 0.25rem;
+  padding: 0.05rem 0.4rem;
+  font-size: 0.625rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  color: var(--color-white);
+  background: var(--color-primary);
+  border-radius: 999px;
+  vertical-align: middle;
+}
+
+.dashboard-sidebar__app-logo {
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  object-fit: contain;
+  background: var(--color-surface);
+}
+
+.dashboard-sidebar__app-info {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.dashboard-sidebar__app-name {
+  flex: initial;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--color-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dashboard-sidebar__app-cat {
+  font-size: 0.6875rem;
+  font-weight: 600;
 }

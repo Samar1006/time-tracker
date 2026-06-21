@@ -4,7 +4,7 @@
   justify-content: space-between;
   gap: 1rem;
   padding: 1rem 1.5rem;
-  background: var(--color-white);
+  background: var(--color-surface);
   border-bottom: 1px solid var(--color-border);
 }
 
@@ -38,6 +38,21 @@
   }
 }
 
+.dashboard-header__date {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 200px;
+  justify-content: center;
+  padding: 0.625rem 1rem;
+  font-size: 0.9375rem;
+  font-weight: 500;
+  color: var(--color-text);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+}
+
 .dashboard-header__actions {
   display: flex;
   align-items: center;
@@ -59,7 +74,8 @@
   cursor: pointer;
 
   &:hover {
-    background: #e0e4ff;
+    background: var(--color-primary);
+    color: var(--color-white);
   }
 }
 

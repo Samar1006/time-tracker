@@ -1,16 +1,18 @@
 <div class="auth-layout">
   <aside class="auth-layout__hero">
     <div class="auth-layout__hero-content">
+      <div class="auth-layout__avatar-ring">
+        <img
+          class="auth-layout__avatar"
+          [src]="illustrationSrc()"
+          [alt]="illustrationAlt()"
+        />
+      </div>
       <h1 class="auth-layout__headline">
         {{ headline() }}
         <span class="auth-layout__highlight">{{ highlight() }}</span>
       </h1>
       <p class="auth-layout__subtext">{{ subtext() }}</p>
-      <img
-        class="auth-layout__illustration"
-        [src]="illustrationSrc()"
-        [alt]="illustrationAlt()"
-      />
     </div>
   </aside>
 

@@ -1,0 +1,132 @@
+.dashboard-shell {
+  min-height: 100dvh;
+  background: var(--color-app-bg);
+}
+
+.dashboard-shell__body {
+  display: flex;
+  min-height: calc(100dvh - 73px);
+}
+
+.dashboard-shell__main {
+  flex: 1;
+  padding: 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.dashboard-shell__status {
+  margin: 0;
+  padding: 2rem;
+  text-align: center;
+  color: var(--color-text-muted);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+
+  &--error {
+    color: #dc2626;
+  }
+}
+
+.hist-head {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.hist-title {
+  margin: 0;
+  font-size: 1.5rem;
+  color: var(--color-text);
+}
+
+.hist-sub {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: 0.9375rem;
+}
+
+.hist-card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+  padding: 1.5rem;
+}
+
+.hist-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem 1.25rem;
+  list-style: none;
+  margin: 0 0 1.5rem;
+  padding: 0;
+  color: var(--color-text-muted);
+  font-size: 0.8125rem;
+
+  li {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+  }
+}
+
+.hist-legend__dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+}
+
+.hist-chart {
+  display: flex;
+  align-items: flex-end;
+  gap: 0.75rem;
+  height: 260px;
+}
+
+.hist-col {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+  height: 100%;
+}
+
+.hist-bar-area {
+  flex: 1;
+  width: 100%;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+}
+
+.hist-bar {
+  width: 60%;
+  min-height: 4px;
+  display: flex;
+  flex-direction: column-reverse;
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--color-panel-bg);
+  transition: height 0.3s ease;
+}
+
+.hist-seg {
+  width: 100%;
+  display: block;
+}
+
+.hist-total {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--color-text);
+  font-variant-numeric: tabular-nums;
+}
+
+.hist-label {
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+}

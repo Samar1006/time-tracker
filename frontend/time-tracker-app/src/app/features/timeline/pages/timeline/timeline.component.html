@@ -1,0 +1,47 @@
+<div class="dashboard-shell">
+  <app-dashboard-header />
+
+  <div class="dashboard-shell__body">
+    <app-dashboard-sidebar />
+
+    <main class="dashboard-shell__main">
+      @if (loading()) {
+        <p class="dashboard-shell__status">Loading timeline…</p>
+      } @else if (error()) {
+        <p class="dashboard-shell__status dashboard-shell__status--error">{{ error() }}</p>
+      } @else {
+        <header class="tl-head">
+          <h1 class="tl-title">Timeline</h1>
+          <p class="tl-sub">{{ totalTracked() }} tracked · {{ activeHours().length }} active hour(s)</p>
+        </header>
+
+        @if (!hasActivities()) {
+          <p class="dashboard-shell__status">No activity logged for this day. Try logging some on the dashboard.</p>
+        } @else {
+          <div class="tl-list">
+            @for (hour of activeHours(); track hour.hour) {
+              <section class="tl-hour">
+                <div class="tl-hour__label">{{ hour.label }}</div>
+                <div class="tl-hour__blocks">
+                  @for (block of hour.blocks; track block.activity + block.start) {
+                    <div class="tl-block" [style.borderLeftColor]="categoryColor(block.category)">
+                      <span class="tl-block__activity">{{ block.activity }}</span>
+                      <span class="tl-block__meta">
+                        <span
+                          class="tl-block__cat"
+                          [style.background]="categoryColor(block.category) + '22'"
+                          [style.color]="categoryColor(block.category)"
+                        >{{ categoryLabel(block.category) }}</span>
+                        <span class="tl-block__dur">{{ duration(block.durationSec) }}</span>
+                      </span>
+                    </div>
+                  }
+                </div>
+              </section>
+            }
+          </div>
+        }
+      }
+    </main>
+  </div>
+</div>

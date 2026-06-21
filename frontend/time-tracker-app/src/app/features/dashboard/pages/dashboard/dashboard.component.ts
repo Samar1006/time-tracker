@@ -22,6 +22,7 @@ import { StatCardComponent } from '../../components/stat-card/stat-card.componen
 import { TimelineChartComponent } from '../../components/timeline-chart/timeline-chart.component';
 import {
   computeDashboardStats,
+  formatDisplayDate,
   getVisibleHours,
   shiftDate,
   toDateInputValue
@@ -51,7 +52,14 @@ export class DashboardComponent {
   readonly error = signal<string | null>(null);
   readonly lastHeard = signal<string | null>(null);
   readonly voiceError = signal<string | null>(null);
+  readonly trackingAllowed = signal(false);
   private readonly reloadTick = signal(0);
+
+  readonly displayDate = computed(() => formatDisplayDate(this.selectedDate()));
+
+  allowTracking(): void {
+    this.trackingAllowed.set(true);
+  }
 
   private readonly dashboardState = toSignal(
     combineLatest([
