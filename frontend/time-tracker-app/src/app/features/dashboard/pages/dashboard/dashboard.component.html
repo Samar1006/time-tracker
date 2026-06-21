@@ -37,6 +37,68 @@
             Log with voice
           </button>
         </div>
+
+        <section class="ai-schedule-panel">
+          <div class="ai-schedule-panel__copy">
+            <h2>AI schedule parser</h2>
+            <p>Describe any day or multi-day stretch. Parsed blocks are shown below by calendar date.</p>
+          </div>
+
+          <label class="ai-schedule-panel__label" for="ai-transcript">Day description</label>
+          <textarea
+            id="ai-transcript"
+            class="ai-schedule-panel__textarea"
+            [value]="aiTranscript()"
+            (input)="aiTranscript.set($any($event.target).value)"
+            rows="4"
+          ></textarea>
+
+          @if (aiError()) {
+            <p class="ai-schedule-panel__error" role="alert">{{ aiError() }}</p>
+          }
+
+          <div class="ai-schedule-panel__actions">
+            <button
+              type="button"
+              class="ai-schedule-panel__button"
+              (click)="parseAiSchedule()"
+              [disabled]="aiLoading()"
+            >
+              {{ aiLoading() ? 'Parsing…' : 'Parse into timeline' }}
+            </button>
+            @if (parsedScheduleBlocks().length > 0) {
+              <span class="ai-schedule-panel__count">
+                {{ parsedScheduleBlocks().length }} parsed blocks
+              </span>
+            }
+          </div>
+        </section>
+
+        @if (parsedTimelineDays().length > 0) {
+          <section class="ai-timeline-stack" aria-label="AI parsed timeline">
+            @for (day of parsedTimelineDays(); track day.date) {
+              <div class="ai-timeline-stack__day">
+                <app-timeline-chart
+                  [title]="'AI parsed · ' + day.label"
+                  [subtitle]="day.totalTrackedSec > 0 ? 'Voice schedule blocks across 24 hours' : 'No timed blocks for this day'"
+                  [hours]="day.hours"
+                />
+
+                @if (day.unscheduled.length > 0) {
+                  <div class="ai-unscheduled">
+                    <h3>Unscheduled parsed items</h3>
+                    @for (block of day.unscheduled; track block.activity + block.raw) {
+                      <p>
+                        <span>{{ block.activity }}</span>
+                        <small>{{ block.category }}</small>
+                      </p>
+                    }
+                  </div>
+                }
+              </div>
+            }
+          </section>
+        }
       }
     </main>
   </div>

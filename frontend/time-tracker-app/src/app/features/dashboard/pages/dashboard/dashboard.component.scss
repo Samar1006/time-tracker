@@ -26,6 +26,133 @@
   position: relative;
 }
 
+.ai-schedule-panel {
+  display: grid;
+  gap: 0.875rem;
+  padding: 1.25rem;
+  background: var(--color-white);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+}
+
+.ai-schedule-panel__copy {
+  display: grid;
+  gap: 0.25rem;
+
+  h2,
+  p {
+    margin: 0;
+  }
+
+  h2 {
+    font-size: 1rem;
+    font-weight: 700;
+  }
+
+  p {
+    max-width: 720px;
+    color: var(--color-text-muted);
+    font-size: 0.875rem;
+  }
+}
+
+.ai-schedule-panel__label {
+  font-size: 0.8125rem;
+  font-weight: 700;
+  color: var(--color-text-muted);
+}
+
+.ai-schedule-panel__textarea {
+  width: 100%;
+  min-height: 112px;
+  resize: vertical;
+  padding: 0.875rem 1rem;
+  font: inherit;
+  line-height: 1.5;
+  color: var(--color-text);
+  background: #fbfbff;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+
+  &:focus {
+    outline: 2px solid rgba(236, 72, 153, 0.25);
+    border-color: var(--color-primary);
+  }
+}
+
+.ai-schedule-panel__actions {
+  display: flex;
+  align-items: center;
+  gap: 0.875rem;
+  flex-wrap: wrap;
+}
+
+.ai-schedule-panel__button {
+  padding: 0.75rem 1rem;
+  font-size: 0.875rem;
+  font-weight: 700;
+  color: var(--color-white);
+  background: var(--color-primary);
+  border: 0;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+
+  &:disabled {
+    cursor: not-allowed;
+    opacity: 0.65;
+  }
+}
+
+.ai-schedule-panel__count,
+.ai-schedule-panel__error {
+  margin: 0;
+  font-size: 0.875rem;
+}
+
+.ai-schedule-panel__count {
+  color: var(--color-text-muted);
+}
+
+.ai-schedule-panel__error {
+  color: #b91c1c;
+}
+
+.ai-timeline-stack {
+  display: grid;
+  gap: 1rem;
+}
+
+.ai-timeline-stack__day {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.ai-unscheduled {
+  padding: 1rem;
+  background: var(--color-white);
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-md);
+
+  h3 {
+    margin: 0 0 0.75rem;
+    font-size: 0.875rem;
+  }
+
+  p {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    margin: 0.5rem 0 0;
+    color: var(--color-text-muted);
+  }
+
+  small {
+    color: var(--color-text-subtle);
+  }
+}
+
 .dashboard-voice-btn {
   position: absolute;
   right: 1.5rem;

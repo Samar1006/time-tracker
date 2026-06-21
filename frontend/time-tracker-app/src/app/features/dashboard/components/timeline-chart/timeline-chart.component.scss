@@ -46,7 +46,7 @@
 
 .timeline-chart {
   display: grid;
-  grid-template-columns: repeat(11, minmax(0, 1fr));
+  grid-template-columns: repeat(var(--timeline-hour-count, 11), minmax(0, 1fr));
   gap: 0.75rem;
   align-items: end;
   min-height: 220px;
@@ -137,6 +137,6 @@
 @media (max-width: 960px) {
   .timeline-chart {
     overflow-x: auto;
-    grid-template-columns: repeat(11, 56px);
+    grid-template-columns: repeat(var(--timeline-hour-count, 11), 56px);
   }
 }

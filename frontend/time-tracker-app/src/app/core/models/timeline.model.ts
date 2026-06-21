@@ -30,3 +30,20 @@ export interface TimelineResponse {
   totalTrackedSec: number;
   hours: TimelineHour[];
 }
+
+export interface ParsedScheduleBlock {
+  date: string;
+  endDate?: string;
+  dayLabel: string | null;
+  start: string | null;
+  end: string | null;
+  durationMin: number | null;
+  activity: string;
+  category: ActivityCategory;
+  confidence: number;
+  raw: string;
+}
+
+export interface ParsedScheduleResponse {
+  blocks: ParsedScheduleBlock[];
+}

@@ -1,9 +1,9 @@
 import { Component, computed, inject, signal } from '@angular/core';
-import { catchError, of, switchMap, tap } from 'rxjs';
+import { catchError, finalize, of, switchMap, tap } from 'rxjs';
 import { toObservable, toSignal } from '@angular/core/rxjs-interop';
 
 import { AuthService } from '../../../../core/services/auth.service';
-import { TimelineResponse } from '../../../../core/models/timeline.model';
+import { ParsedScheduleBlock, TimelineResponse } from '../../../../core/models/timeline.model';
 import { TimelineService } from '../../../../core/services/timeline.service';
 import { DashboardHeaderComponent } from '../../components/dashboard-header/dashboard-header.component';
 import { DashboardSidebarComponent } from '../../components/dashboard-sidebar/dashboard-sidebar.component';
@@ -16,6 +16,10 @@ import {
   shiftDate,
   toDateInputValue
 } from '../../utils/dashboard-stats.util';
+import {
+  ParsedTimelineDay,
+  scheduleBlocksToTimelineDays
+} from '../../utils/ai-schedule-timeline.util';
 
 @Component({
   selector: 'app-dashboard',
@@ -35,6 +39,12 @@ export class DashboardComponent {
   readonly selectedDate = signal(toDateInputValue(new Date()));
   readonly loading = signal(true);
   readonly error = signal<string | null>(null);
+  readonly aiTranscript = signal(
+    'Yesterday from 11 PM to 1 AM I studied. Today from 9 to 10 I coded the dashboard. Tomorrow at 2 PM I have a meeting for 1 hour.'
+  );
+  readonly aiLoading = signal(false);
+  readonly aiError = signal<string | null>(null);
+  readonly parsedScheduleBlocks = signal<ParsedScheduleBlock[]>([]);
 
   private readonly timelineState = toSignal(
     toObservable(this.selectedDate).pipe(
@@ -85,6 +95,9 @@ export class DashboardComponent {
   });
 
   readonly displayDate = computed(() => formatDisplayDate(this.selectedDate()));
+  readonly parsedTimelineDays = computed<ParsedTimelineDay[]>(() =>
+    scheduleBlocksToTimelineDays(this.parsedScheduleBlocks())
+  );
 
   previousDay(): void {
     this.selectedDate.update((date) => shiftDate(date, -1));
@@ -95,7 +108,26 @@ export class DashboardComponent {
   }
 
   onVoiceLog(): void {
-    // TODO: wire to /api/transcribe and schedule pipeline
-    console.log('Voice log clicked');
+    this.parseAiSchedule();
+  }
+
+  parseAiSchedule(): void {
+    const transcript = this.aiTranscript().trim();
+    if (!transcript) {
+      this.aiError.set('Describe your day first so AI has something to parse.');
+      return;
+    }
+
+    this.aiLoading.set(true);
+    this.aiError.set(null);
+
+    this.timelineService.parseSchedule(transcript, this.selectedDate()).pipe(
+      finalize(() => this.aiLoading.set(false))
+    ).subscribe({
+      next: (result) => this.parsedScheduleBlocks.set(result.blocks),
+      error: () => {
+        this.aiError.set('Unable to parse schedule. Make sure the backend is running on port 4000.');
+      }
+    });
   }
 }

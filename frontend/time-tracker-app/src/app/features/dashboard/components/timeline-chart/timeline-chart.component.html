@@ -1,8 +1,8 @@
 <section class="timeline-card">
   <header class="timeline-card__header">
     <div>
-      <h2 class="timeline-card__title">Today's timeline</h2>
-      <p class="timeline-card__subtitle">Hour-by-hour activity breakdown</p>
+      <h2 class="timeline-card__title">{{ title() }}</h2>
+      <p class="timeline-card__subtitle">{{ subtitle() }}</p>
     </div>
     <button type="button" class="timeline-card__info" aria-label="Timeline info">
       <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
@@ -13,7 +13,7 @@
     </button>
   </header>
 
-  <div class="timeline-chart">
+  <div class="timeline-chart" [style.--timeline-hour-count]="hours().length">
     @for (hour of hours(); track hour.hour) {
       <div class="timeline-chart__column">
         <div class="timeline-chart__bar">
@@ -28,7 +28,7 @@
                 [style.background]="categoryColor(block.category)"
                 (mouseenter)="showTooltip(block, $event)"
                 (mouseleave)="hideTooltip()"
-                [attr.aria-label]="block.activity + ', ' + block.durationSec + ' seconds'"
+                [attr.aria-label]="segmentLabel(block)"
               ></button>
             }
           }

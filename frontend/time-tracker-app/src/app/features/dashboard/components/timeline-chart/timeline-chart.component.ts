@@ -24,6 +24,8 @@ export class TimelineChartComponent {
   readonly hours = input.required<TimelineHour[]>();
   readonly startHour = input(8);
   readonly endHour = input(18);
+  readonly title = input("Today's timeline");
+  readonly subtitle = input('Hour-by-hour activity breakdown');
 
   readonly tooltip = signal<TooltipState | null>(null);
   readonly categoryLegend = CATEGORY_LEGEND;
@@ -65,5 +67,10 @@ export class TimelineChartComponent {
 
   hideTooltip(): void {
     this.tooltip.set(null);
+  }
+
+  segmentLabel(block: TimelineBlock): string {
+    const source = block.source === 'voice' ? 'AI parsed' : block.source;
+    return `${block.activity}, ${formatDuration(block.durationSec)}, ${source}`;
   }
 }
