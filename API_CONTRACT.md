@@ -61,7 +61,7 @@ Posted by clients (browser extension, macOS/iOS tracker, demo script).
 
 | Field | Required | Notes |
 |-------|----------|-------|
-| `userId` | **Yes** | Stable string per user/session |
+| `userId` | No | Ignored; server sets from JWT. If present and ≠ token user → `403` |
 | `timestamp` | **Yes** | ISO 8601 UTC — start of event |
 | `type` | **Yes** | e.g. `app_focus`, `domain_visit`, `idle`, `manual` |
 | `app` | No | Application name |
@@ -192,7 +192,9 @@ Optional request field: `referenceDate` (ISO 8601) — anchor for resolving “t
 **Status:** ✅ Implemented on `ingestion-timeline`  
 **Owner:** Samar
 
-**Request body:** single [Raw activity event](#raw-activity-event) or `{ "events": [ ... ] }` for batch.
+**Headers:** `Authorization: Bearer <token>` (required)
+
+**Request body:** single [Raw activity event](#raw-activity-event) or `{ "events": [ ... ] }` for batch. `userId` in the body is optional; the server always stores events under the authenticated user's id.
 
 **Success:** `201`
 
@@ -204,9 +206,21 @@ Optional request field: `referenceDate` (ISO 8601) — anchor for resolving “t
 }
 ```
 
-**Errors:** `400` (missing fields), `503` (Redis unavailable when `REDIS_URL` set but down)
+**Errors:** `401` (missing/invalid token), `403` (body `userId` ≠ token user), `400` (missing fields), `503` (Redis unavailable when `REDIS_URL` set but down)
 
 **Redis key:** `events:{userId}:{YYYY-MM-DD}` — list of JSON strings
+
+**Example:**
+
+```bash
+TOKEN=$(curl -s -X POST http://localhost:4000/api/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"demo@timetracker.test","password":"Demo1234!"}' | jq -r .token)
+curl -s -X POST http://localhost:4000/api/events \
+  -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"timestamp":"2026-06-20T14:00:00.000Z","type":"app_focus","app":"Cursor","durationSec":300}'
+```
 
 ---
 
@@ -215,15 +229,19 @@ Optional request field: `referenceDate` (ISO 8601) — anchor for resolving “t
 **Status:** ✅ Implemented on `ingestion-timeline`  
 **Owner:** Samar
 
+**Headers:** `Authorization: Bearer <token>` (required)
+
 **Query params:**
 
 | Param | Required | Default |
 |-------|----------|---------|
-| `userId` | **Yes** | — |
+| `userId` | No | authenticated user (if provided, must match token user or `403`) |
 | `date` | No | today (UTC) |
 | `timezone` | No | `UTC` |
 
 **Success:** `200` — [Timeline hour bucket](#timeline-hour-bucket) object (24 slots).
+
+**Errors:** `401` (missing/invalid token), `403` (`userId` query ≠ token user)
 
 **Demo fallback:** Returns padded `demoTimeline.json` when no stored events exist.
 
@@ -231,11 +249,13 @@ Optional request field: `referenceDate` (ISO 8601) — anchor for resolving “t
 
 #### Dev helpers (Samar — not required for MVP judges)
 
+All require `Authorization: Bearer <token>`. Scoped to the authenticated user only.
+
 | Method | Path | Purpose |
 |--------|------|---------|
-| POST | `/api/events/seed` | Load mock events for demo |
+| POST | `/api/events/seed` | Load mock events for demo user |
 | GET | `/api/events` | Debug raw stored events |
-| DELETE | `/api/events` | Clear a user/day |
+| DELETE | `/api/events` | Clear authenticated user's day |
 
 ---
 

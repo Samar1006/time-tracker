@@ -52,7 +52,13 @@ curl -X POST http://localhost:4000/api/auth/login \
 Or fetch credentials: `GET /api/auth/demo-account`
 
 Use the returned `token` as `Authorization: Bearer <token>` on protected routes.
-The demo user's `userId` matches the timeline API (`GET /api/timeline?userId=user-demo-1`).
+
+### Activity ingest auth
+
+All activity endpoints (`POST /api/events`, `GET /api/timeline`, dev helpers) require
+`Authorization: Bearer <token>`. The server derives `userId` from the JWT — do not
+trust `userId` in the request body or query. Native clients (Mac tracker, Chrome
+extension) must send the Bearer header on every ingest call.
 
 ## Endpoints
 
@@ -63,11 +69,11 @@ The demo user's `userId` matches the timeline API (`GET /api/timeline?userId=use
 | POST | `/api/auth/signup` | Auth | `{ fullName, email, password }` → `{ token, user }` |
 | GET  | `/api/auth/me` | Auth | `Authorization: Bearer <token>` |
 | GET  | `/api/auth/demo-account` | Auth | Returns seeded test credentials |
-| POST | `/api/events` | Samar | Single event or `{ events: [...] }` |
-| GET  | `/api/timeline` | Samar | Requires `userId`; demo fallback when empty |
-| POST | `/api/events/seed` | Samar | Dev helper — loads mock events |
-| GET  | `/api/events` | Samar | Debug raw events |
-| DELETE | `/api/events` | Samar | Clear a user/day |
+| POST | `/api/events` | Samar | Bearer required; single event or `{ events: [...] }` |
+| GET  | `/api/timeline` | Samar | Bearer required; demo fallback when empty |
+| POST | `/api/events/seed` | Samar | Bearer required — loads mock events for auth user |
+| GET  | `/api/events` | Samar | Bearer required — debug raw events |
+| DELETE | `/api/events` | Samar | Bearer required — clear auth user's day |
 | POST | `/api/schedule/parse` | Allison | `{ transcript, useLLM? }` → `{ blocks: [...] }` |
 | POST | `/api/transcribe` | Allison | `{ url }` or `{ audioBase64 }` → `{ transcript, words }` (needs `DEEPGRAM_API_KEY`) |
 | POST | `/api/categorize/domain` | Allison | `{ domain }` → `{ category, confidence, method }` |

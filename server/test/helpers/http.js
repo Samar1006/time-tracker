@@ -21,6 +21,21 @@ export async function stopTestServer() {
   baseUrl = null;
 }
 
+export function bearer(token) {
+  return { Authorization: `Bearer ${token}` };
+}
+
+export async function loginDemo() {
+  const res = await request('/api/auth/login', {
+    method: 'POST',
+    body: { email: 'demo@timetracker.test', password: 'Demo1234!' },
+  });
+  if (res.status !== 200 || !res.body?.token) {
+    throw new Error('Demo login failed in test helper.');
+  }
+  return res.body.token;
+}
+
 export async function request(path, { method = 'GET', body, headers = {} } = {}) {
   if (!baseUrl) throw new Error('Call startTestServer() first');
 
