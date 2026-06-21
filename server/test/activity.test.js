@@ -196,6 +196,32 @@ describe('activity routes (API contract)', () => {
     assert.equal(timeline.body.hours[10].blocks[0].source, 'tracked');
   });
 
+  it('overnight voice event on start day appears on both timelines', async () => {
+    await request('/api/events', {
+      method: 'POST',
+      headers: bearer(token),
+      body: {
+        events: [{
+          timestamp: `${DATE}T23:00:00.000Z`,
+          type: 'voice',
+          title: 'sleeping',
+          durationSec: 7 * 3600,
+          metadata: { localDate: DATE, endLocalDate: '2026-06-21', category: 'break' },
+        }],
+      },
+    });
+
+    const night = await request(`/api/timeline?date=${DATE}&timezone=UTC`, {
+      headers: bearer(token),
+    });
+    assert.equal(night.body.hours[23].blocks[0].activity, 'sleeping');
+
+    const morning = await request('/api/timeline?date=2026-06-21&timezone=UTC', {
+      headers: bearer(token),
+    });
+    assert.equal(morning.body.hours[5].blocks.some((b) => b.activity === 'sleeping'), true);
+  });
+
   it('DELETE /api/events clears a day', async () => {
     await request('/api/events/seed', {
       method: 'POST',

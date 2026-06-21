@@ -3,26 +3,7 @@ import { HttpClient } from '@angular/common/http';
 import { firstValueFrom } from 'rxjs';
 
 import { environment } from '../../../environments/environment';
-
-/** A parsed schedule block as returned by POST /api/schedule/parse. */
-interface ScheduleBlock {
-  date?: string | null;
-  endDate?: string | null;
-  start?: string | null;
-  end?: string | null;
-  durationMin?: number | null;
-  activity?: string;
-  category?: string;
-}
-
-/** A raw activity event as accepted by POST /api/events. */
-interface RawEvent {
-  timestamp: string;
-  type: string;
-  title: string;
-  durationSec: number;
-  metadata?: Record<string, unknown>;
-}
+import { scheduleBlocksToEvents, type ScheduleBlock } from '../utils/voice-block.util';
 
 export interface VoiceLogResult {
   transcript: string;
@@ -105,9 +86,7 @@ export class VoiceLogService {
           );
 
           const blocks = parsed.blocks ?? [];
-          const events = blocks
-            .map((b) => blockToEvent(b, selectedDate))
-            .filter((e): e is RawEvent => e !== null);
+          const events = scheduleBlocksToEvents(blocks, selectedDate);
 
           if (events.length) {
             await firstValueFrom(
@@ -134,72 +113,4 @@ async function blobToBase64(blob: Blob): Promise<string> {
     reader.onerror = reject;
     reader.readAsDataURL(blob);
   });
-}
-
-/** "9:00 AM" / "9 AM" -> minutes since midnight. Returns null if unparseable. */
-function parseClock(label: string | null | undefined): number | null {
-  if (!label) return null;
-  const trimmed = label.trim();
-  const withMinutes = trimmed.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
-  if (withMinutes) {
-    return toMinutesSinceMidnight(
-      parseInt(withMinutes[1], 10),
-      parseInt(withMinutes[2], 10),
-      withMinutes[3],
-    );
-  }
-  const withoutMinutes = trimmed.match(/^(\d{1,2})\s*(AM|PM)$/i);
-  if (withoutMinutes) {
-    return toMinutesSinceMidnight(parseInt(withoutMinutes[1], 10), 0, withoutMinutes[2]);
-  }
-  return null;
-}
-
-function toMinutesSinceMidnight(hour12: number, minute: number, period: string): number {
-  let h = hour12;
-  const p = period.toUpperCase();
-  if (p === 'PM' && h < 12) h += 12;
-  if (p === 'AM' && h === 12) h = 0;
-  return h * 60 + minute;
-}
-
-/** Local wall-clock on `date` (YYYY-MM-DD) -> UTC ISO timestamp for storage. */
-function localTimestamp(date: string, minutesSinceMidnight: number): string {
-  const [year, month, day] = date.split('-').map(Number);
-  const hour = Math.floor(minutesSinceMidnight / 60);
-  const minute = minutesSinceMidnight % 60;
-  return new Date(year, month - 1, day, hour, minute, 0, 0).toISOString();
-}
-
-function blockToEvent(block: ScheduleBlock, viewedDate: string): RawEvent | null {
-  const startMin = parseClock(block.start);
-  if (startMin == null) return null;
-
-  // Bucket under the dashboard day the user is viewing so blocks appear immediately.
-  const storageDate = viewedDate;
-  const endMin = parseClock(block.end);
-  let durationSec: number;
-  if (block.durationMin != null && block.durationMin > 0) {
-    durationSec = Math.max(60, Math.round(block.durationMin * 60));
-  } else if (endMin != null) {
-    let span = endMin - startMin;
-    if (span <= 0 && block.endDate && block.endDate !== storageDate) {
-      span = endMin + 24 * 60 - startMin;
-    }
-    durationSec = Math.max(60, span * 60);
-  } else {
-    durationSec = 30 * 60;
-  }
-
-  return {
-    timestamp: localTimestamp(storageDate, startMin),
-    type: 'voice',
-    title: block.activity?.trim() || 'Activity',
-    durationSec,
-    metadata: {
-      category: block.category,
-      sourceClient: 'dashboard-voice',
-      localDate: storageDate,
-    },
-  };
 }

@@ -24,6 +24,7 @@
           <app-timeline-chart
             [hours]="dayHours()"
             [date]="selectedDate()"
+            [timezone]="timeline()?.timezone ?? 'UTC'"
             (prevDay)="previousDay()"
             (nextDay)="nextDay()"
             (selectDate)="selectDate($event)"

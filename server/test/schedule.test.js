@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseTranscript, toDateISO, normalizeCategoryContext, finalizeBlockSpan } from '../src/routes/schedule.js';
+import { parseTranscript, toDateISO, normalizeCategoryContext, finalizeBlockSpan, resolveCalendarDate } from '../src/routes/schedule.js';
 import { sampleTranscripts } from '../src/data/sampleTranscripts.js';
 
 const REF = new Date('2026-06-20T12:00:00.000Z');
@@ -173,6 +173,53 @@ test('overnight span sets endDate and duration across midnight', () => {
   assert.equal(blocks[0].durationMin, 600);
   assert.equal(blocks[0].activity, 'sleeping');
   assert.equal(blocks[0].category, 'break');
+});
+
+test('does not split on "the next day" phrase', () => {
+  const { blocks } = parse('sleep from 8 pm to 7 am the next day');
+  assert.equal(blocks.length, 1);
+  assert.equal(blocks[0].endDate, '2026-06-21');
+  assert.equal(blocks[0].start, '8:00 PM');
+  assert.equal(blocks[0].end, '7:00 AM');
+  assert.equal(blocks[0].durationMin, 660);
+});
+
+test('parses 11 pm to 6 am the next day as overnight sleep', () => {
+  const { blocks } = parse("I'm going to sleep from 11 pm to 6 am the next day");
+  assert.equal(blocks.length, 1);
+  assert.equal(blocks[0].date, '2026-06-20');
+  assert.equal(blocks[0].endDate, '2026-06-21');
+  assert.equal(blocks[0].start, '11:00 PM');
+  assert.equal(blocks[0].end, '6:00 AM');
+  assert.equal(blocks[0].durationMin, 420);
+  assert.equal(blocks[0].activity, 'sleeping');
+});
+
+test('assigns explicit month-day phrases to the spoken calendar date', () => {
+  const { blocks } = parse('on June 23rd I have a meeting from 1 pm to 2 pm');
+  assert.equal(blocks.length, 1);
+  assert.equal(blocks[0].date, '2026-06-23');
+  assert.equal(blocks[0].start, '1:00 PM');
+  assert.equal(blocks[0].end, '2:00 PM');
+  assert.equal(blocks[0].activity, 'meeting');
+});
+
+test('parses month-day prefix before from-to pm ranges', () => {
+  const { blocks } = parse('June 23rd meeting from 1 to 2 pm');
+  assert.equal(blocks[0].date, '2026-06-23');
+  assert.equal(blocks[0].start, '1:00 PM');
+  assert.equal(blocks[0].end, '2:00 PM');
+});
+
+test('assigns on-the-Nth to a date in the reference month', () => {
+  const { blocks } = parse('on the 23rd I have a meeting from 1 pm to 2 pm');
+  assert.equal(blocks[0].date, '2026-06-23');
+});
+
+test('resolveCalendarDate parses month-day and ordinal day forms', () => {
+  const ref = new Date('2026-06-20T12:00:00.000Z');
+  assert.equal(resolveCalendarDate('on June 23rd I have a meeting', ref).date, '2026-06-23');
+  assert.equal(resolveCalendarDate('on the 23rd', ref).date, '2026-06-23');
 });
 
 test('tomorrow overnight span advances both start and end dates', () => {

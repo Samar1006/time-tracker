@@ -47,13 +47,13 @@ function normalizeSpokenTimes(text) {
   );
   s = s.replace(
     new RegExp(
-      `\\bfrom\\s+(${HOUR_WORD_RE}|\\d{1,2}:\\d{2}|\\d{1,2})\\s+to\\s+(${HOUR_WORD_RE}|\\d{1,2}:\\d{2}|\\d{1,2})(?:\\s*(?:am|pm)|(?:am|pm))?\\b`,
+      `\\bfrom\\s+(${HOUR_WORD_RE}|\\d{1,2}:\\d{2}|\\d{1,2})\\s+to\\s+(${HOUR_WORD_RE}|\\d{1,2}:\\d{2}|\\d{1,2})(?:\\s*(am|pm))?\\b`,
       'gi',
     ),
     (_, t1, t2, ap) => {
       const h1 = wordToHour(t1) ?? t1;
       const h2 = wordToHour(t2) ?? t2;
-      return `from ${h1} to ${h2}${ap ? ` ${ap}` : ''}`;
+      return ap ? `from ${h1} to ${h2} ${ap}` : `from ${h1} to ${h2}`;
     },
   );
   s = s.replace(
@@ -121,13 +121,12 @@ function isDurationToken(seg, index, length) {
 }
 
 // "from 2 to 3 am" / "from 7 pm until 9" — share am/pm across both ends when only one side has it.
-function parseFromToRange(seg, contextPm) {
-  const normalized = normalizeSpokenTimes(seg);
+export function parseFromToRange(seg, contextPm) {
   const rangeRe = new RegExp(
     `\\bfrom\\s+(${FROM_TO_TIME})\\s+(?:to|until|till)\\s+(${FROM_TO_TIME})\\b`,
     'i',
   );
-  const m = normalized.match(rangeRe);
+  const m = seg.match(rangeRe);
   if (!m) return null;
 
   const endToken = m[2];
@@ -187,12 +186,84 @@ const WEEKDAY_NAMES = {
 const WEEKDAY_RE =
   'monday|tuesday|wednesday|thursday|friday|saturday|sunday|mon|tue|tues|wed|thu|thur|thurs|fri|sat|sun';
 
+const MONTH_NAMES = {
+  january: 1, jan: 1, february: 2, feb: 2, march: 3, mar: 3,
+  april: 4, apr: 4, may: 5, june: 6, jun: 6, july: 7, jul: 7,
+  august: 8, aug: 8, september: 9, sep: 9, sept: 9,
+  october: 10, oct: 10, november: 11, nov: 11, december: 12, dec: 12,
+};
+
+const MONTH_RE =
+  'jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?';
+
+function monthNameToNum(name) {
+  return MONTH_NAMES[String(name).toLowerCase()] ?? null;
+}
+
+function padDateISO(year, month, day) {
+  return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+}
+
+function inferYearForMonthDay(referenceDate, month, day) {
+  const refISO = toDateISO(referenceDate);
+  let year = new Date(`${refISO}T12:00:00.000Z`).getUTCFullYear();
+  if (padDateISO(year, month, day) < refISO) year += 1;
+  return year;
+}
+
+/** Parse explicit calendar dates like "June 23rd" or "on the 23rd". */
+export function resolveCalendarDate(text, referenceDate) {
+  const lower = text.toLowerCase();
+
+  const monthDay = lower.match(
+    new RegExp(`\\b(?:on\\s+)?(${MONTH_RE})\\s+(\\d{1,2})(?:st|nd|rd|th)?(?:\\s*,?\\s*(\\d{4}))?\\b`, 'i'),
+  );
+  if (monthDay) {
+    const month = monthNameToNum(monthDay[1]);
+    const day = parseInt(monthDay[2], 10);
+    if (month && day >= 1 && day <= 31) {
+      const year = monthDay[3]
+        ? parseInt(monthDay[3], 10)
+        : inferYearForMonthDay(referenceDate, month, day);
+      return { date: padDateISO(year, month, day), dayLabel: null };
+    }
+  }
+
+  const dayOnly = lower.match(/\b(?:on\s+)?(?:the\s+)?(\d{1,2})(?:st|nd|rd|th)\b/);
+  if (dayOnly) {
+    const day = parseInt(dayOnly[1], 10);
+    if (day >= 1 && day <= 31) {
+      const ref = new Date(`${toDateISO(referenceDate)}T12:00:00.000Z`);
+      let year = ref.getUTCFullYear();
+      let month = ref.getUTCMonth() + 1;
+      let dateStr = padDateISO(year, month, day);
+      if (dateStr < toDateISO(referenceDate)) {
+        const next = new Date(Date.UTC(year, month - 1, day, 12, 0, 0));
+        next.setUTCMonth(next.getUTCMonth() + 1);
+        dateStr = toDateISO(next);
+      }
+      return { date: dateStr, dayLabel: null };
+    }
+  }
+
+  return null;
+}
+
+const CALENDAR_PHRASE_RE = new RegExp(
+  `\\b(?:on\\s+)?(?:the\\s+)?(?:${MONTH_RE}\\s+\\d{1,2}(?:st|nd|rd|th)?(?:\\s*,?\\s*\\d{4})?|\\d{1,2}(?:st|nd|rd|th))\\b`,
+  'gi',
+);
+
+function stripCalendarForTimeParsing(text) {
+  return text.replace(CALENDAR_PHRASE_RE, ' ');
+}
+
 // Split a transcript into clause-ish segments we can label individually.
 function segment(transcript) {
   return transcript
     .split(
       new RegExp(
-        String.raw`(?:\.|;|\bthen\b|\bafter that\b|\bafterwards\b|\bnext\b(?!\s+(?:${WEEKDAY_RE}|week)))`,
+        String.raw`(?:\.|;|\bthen\b|\bafter that\b|\bafterwards\b|\bnext\b(?!\s+(?:${WEEKDAY_RE}|week|day)))`,
         'i',
       ),
     )
@@ -218,6 +289,9 @@ function weekdayToDate(referenceDate, weekdayNum, forceNext = false) {
 }
 
 export function resolveDayFromSegment(seg, referenceDate, contextDateISO) {
+  const calendar = resolveCalendarDate(seg, referenceDate);
+  if (calendar) return calendar;
+
   const lower = seg.toLowerCase();
 
   if (/\btoday\b/.test(lower)) {
@@ -256,6 +330,7 @@ function marksAfternoon(text) {
 // Strip time/duration noise but keep readable activity phrases.
 function cleanActivity(text) {
   let s = normalizeSpokenTimes(text);
+  s = s.replace(CALENDAR_PHRASE_RE, ' ');
   s = s.replace(
     new RegExp(
       `\\bfrom\\s+(?:${HOUR_WORD_RE}|\\d{1,2}:\\d{2}|\\d{1,2})\\s+to\\s+(?:${HOUR_WORD_RE}|\\d{1,2}:\\d{2}|\\d{1,2})(?:\\s*(?:am|pm)|(?:am|pm))?\\b`,
@@ -272,12 +347,16 @@ function cleanActivity(text) {
       ' ',
     )
     .replace(TIME_RE_G, '')
+    .replace(/\b(?:i'?m|i am)\s+going\s+to\s+/gi, ' ')
+    .replace(/\b(?:i'?m|i am)\s+/gi, ' ')
+    .replace(/\bthe\s+next\s+day\b/gi, ' ')
     .replace(/\b(?:until|till|from|to|around|about|at)\b/gi, ' ')
-    .replace(/\b(?:i'll|i'll|i\s+will\s+be|i\s+will|will\s+be|will|going\s+to|gonna)\s+/gi, ' ')
+    .replace(/\b(?:i'll|i'll|i\s+will\s+be|i\s+will|will\s+be|will|gonna)\s+/gi, ' ')
     .replace(
       new RegExp(`\\b(?:today|tomorrow|yesterday|next\\s+(?:${WEEKDAY_RE}|week)|on\\s+(?:${WEEKDAY_RE}))\\b`, 'gi'),
       ' ',
     )
+    .replace(/\b(?:i\s+)?have\s+(?:a\s+)?/gi, '')
     .replace(/\b(?:i\s+)?spent\s+/gi, '')
     .replace(/\b(am|pm)\b/gi, '')
     .replace(/\b(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\b/gi, ' ')
@@ -344,8 +423,8 @@ export function toPresentActivityLabel(text) {
 }
 
 // Pull start/end/duration from one segment before cross-segment inference.
-function parseSegmentTimes(seg, contextPm) {
-  const normalized = normalizeSpokenTimes(seg);
+export function parseSegmentTimes(seg, contextPm) {
+  const normalized = normalizeSpokenTimes(stripCalendarForTimeParsing(seg));
   const range = parseFromToRange(normalized, contextPm);
   if (range) return range;
 
@@ -422,10 +501,11 @@ export function finalizeBlockSpan(dateISO, startMin, endMin, raw = '') {
   const pmThenAm =
     /\b\d{1,2}(?::\d{2})?\s*pm\b[\s\S]*\b\d{1,2}(?::\d{2})?\s*am\b/i.test(raw) ||
     (/\bpm\b/i.test(raw) && /\bam\b/i.test(raw) && raw.search(/\bpm\b/i) < raw.search(/\bam\b/i));
+  const explicitNextDay = /\b(?:the\s+)?next\s+day\b/i.test(raw);
 
   const startIsPm = /\bpm\b/i.test(raw) || (startMin != null && startMin >= 12 * 60);
   const endIsAm = /\bam\b/i.test(raw);
-  const overnight = pmThenAm || (startIsPm && endIsAm && endMin < startMin);
+  const overnight = pmThenAm || explicitNextDay || (startIsPm && endIsAm && endMin < startMin);
 
   if (overnight) {
     return {
@@ -445,6 +525,20 @@ export function finalizeBlockSpan(dateISO, startMin, endMin, raw = '') {
     durationMin: wrappedEnd - startMin,
     spansMidnight: false,
   };
+}
+
+/** Overnight sleep ending in PM is usually a misheard AM (e.g. "5 pm" → 5 am). */
+function correctOvernightSleepEnd(endMin, endLabel, raw, spansMidnight) {
+  if (!spansMidnight || endMin == null || !/\bsleep/i.test(raw)) return endMin;
+  const endHasPm =
+    /\bpm\b/i.test(endLabel ?? '') ||
+    (endMin >= 12 * 60 && endMin < 24 * 60 && !/\bam\b/i.test(endLabel ?? ''));
+  if (!endHasPm) return endMin;
+  const hour12 = (Math.floor(endMin / 60) % 12) || 12;
+  if (hour12 >= 1 && hour12 <= 11) {
+    return endMin - 12 * 60;
+  }
+  return endMin;
 }
 
 // Fill gaps using prior block end, lunch context, and trailing durations.
@@ -478,7 +572,12 @@ function inferMissingTimes(blocks) {
     const span = finalizeBlockSpan(dateKey, startMin, endMin, block.raw);
     startMin = span.startMin;
     endMin = span.endMin;
-    duration = span.durationMin ?? duration;
+    if (span.spansMidnight) {
+      endMin = correctOvernightSleepEnd(endMin, block.end, block.raw, true);
+      duration = (24 * 60 - startMin) + endMin;
+    } else {
+      duration = span.durationMin ?? duration;
+    }
 
     block.start = fmt(startMin);
     block.end = fmt(endMin);
@@ -653,8 +752,10 @@ export async function refineWithLLM(transcript, fallback, { categoryContext = []
         'When someone says "at 6 am for 3 hours", the block runs 6:00 AM to 9:00 AM. ' +
         'When they say "from 2 to 3 am", both times are AM. ' +
         'When they say "from 8 pm to 6 am", set endDate to the next calendar day (end stays 6:00 AM). ' +
+        'When they say "from 11 pm to 6 am the next day", treat it the same way. ' +
+        'When they say "on June 23rd" or "on the 23rd", set date to that calendar day (YYYY-MM-DD) using referenceDate for month/year. ' +
         'Treat spoken number words (one, two, six, etc.) as numeric times and durations. ' +
-        'Each block needs a calendar date (YYYY-MM-DD). Infer today/tomorrow/weekday mentions from the transcript. ' +
+        'Each block needs a calendar date (YYYY-MM-DD). Infer today/tomorrow/weekday/month-day mentions from the transcript. ' +
         'Infer missing start times from the previous activity end when reasonable. ' +
         'Activity labels must use present tense / -ing form (e.g. "walking", "working out", "studying", "answering emails"). ' +
         'Do not use past tense or future tense in activity labels.\n\n' +

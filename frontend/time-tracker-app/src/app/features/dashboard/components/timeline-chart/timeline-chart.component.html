@@ -30,30 +30,36 @@
   </header>
 
   <div class="day-calendar">
-    @if (!hasActivity()) {
-      <p class="day-calendar__empty">No activity logged for this day yet.</p>
-    } @else {
-      <div class="day-calendar__scroll">
+    <div class="day-calendar__scroll">
+      <div class="day-calendar__layout" [style.height.px]="canvasHeightPx">
+        <div class="day-calendar__labels" aria-hidden="true">
+          @for (guide of hourGuides(); track guide.hour) {
+            <span class="day-calendar__hour-label" [style.top.%]="guide.topPct">
+              {{ guide.label }}
+            </span>
+          }
+        </div>
+
         <div
           class="day-calendar__canvas"
-          [style.height.px]="canvasHeightPx()"
           role="list"
           aria-label="Activity timeline"
         >
           @for (guide of hourGuides(); track guide.hour) {
-            <div class="day-calendar__hour" [style.top.%]="guide.topPct">
-              <span class="day-calendar__hour-label">{{ guide.label }}</span>
+            <div class="day-calendar__hour-line-wrap" [style.top.%]="guide.topPct">
               <div class="day-calendar__hour-line" aria-hidden="true"></div>
             </div>
-            @if (guide.hour < rangeEndHour()) {
-              <div
-                class="day-calendar__half-hour"
-                [style.top.%]="guide.topPct + halfHourStepPct()"
-                aria-hidden="true"
-              >
-                <div class="day-calendar__half-hour-line"></div>
-              </div>
-            }
+            <div
+              class="day-calendar__half-hour-line-wrap"
+              [style.top.%]="guide.topPct + halfHourStepPct"
+              aria-hidden="true"
+            >
+              <div class="day-calendar__half-hour-line"></div>
+            </div>
+          }
+
+          @if (!hasActivity()) {
+            <p class="day-calendar__empty">No activity logged for this day yet.</p>
           }
 
           @for (positioned of positionedBlocks(); track blockTrackKey(positioned)) {
@@ -67,6 +73,8 @@
               [style.width.%]="blockWidthPct(positioned)"
               [style.background]="categoryColor(positioned.block.category)"
               [class.day-calendar__event--compact]="positioned.heightPct < 2.5"
+              [class.day-calendar__event--continues-next-day]="blockContinuesNextDay(positioned.block)"
+              [class.day-calendar__event--continues-prev-day]="blockContinuesFromPrevDay(positioned.block)"
               (mouseenter)="showBlockTooltip(positioned, $event)"
               (mouseleave)="hideTooltip()"
               [attr.aria-label]="categoryLabels[positioned.block.category] + ', ' + formatTimeRange(positioned.block)"
@@ -75,11 +83,14 @@
               <span class="day-calendar__event-meta">
                 {{ formatTimeRange(positioned.block) }}
               </span>
+              @if (blockContinuesNextDay(positioned.block)) {
+                <span class="day-calendar__event-continues" aria-hidden="true">continues</span>
+              }
             </button>
           }
         </div>
       </div>
-    }
+    </div>
   </div>
 
   <footer class="timeline-card__legend">
