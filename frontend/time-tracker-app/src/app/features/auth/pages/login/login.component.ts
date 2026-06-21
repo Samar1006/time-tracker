@@ -1,6 +1,7 @@
-import { Component, inject } from '@angular/core';
+import { Component, inject, signal } from '@angular/core';
 import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
 import { Router, RouterLink } from '@angular/router';
+import { HttpErrorResponse } from '@angular/common/http';
 
 import { AuthService } from '../../../../core/services/auth.service';
 import { AuthFormHeaderComponent } from '../../../../shared/components/auth-form-header/auth-form-header.component';
@@ -24,6 +25,9 @@ export class LoginComponent {
   private readonly auth = inject(AuthService);
   private readonly router = inject(Router);
 
+  readonly loading = signal(false);
+  readonly error = signal<string | null>(null);
+
   readonly loginForm = this.fb.nonNullable.group({
     email: ['', [Validators.required, Validators.email]],
     password: ['', Validators.required]
@@ -35,13 +39,43 @@ export class LoginComponent {
       return;
     }
 
-    const { email } = this.loginForm.getRawValue();
-    this.auth.login(email);
-    void this.router.navigate(['/dashboard']);
+    const { email, password } = this.loginForm.getRawValue();
+    this.loading.set(true);
+    this.error.set(null);
+
+    this.auth.login(email, password).subscribe({
+      next: () => void this.router.navigate(['/dashboard']),
+      error: (err: HttpErrorResponse) => {
+        this.error.set(this.extractErrorMessage(err));
+        this.loading.set(false);
+      },
+      complete: () => this.loading.set(false)
+    });
   }
 
   onGoogleSignIn(): void {
-    this.auth.login('demo@timetracker.app');
-    void this.router.navigate(['/dashboard']);
+    this.loading.set(true);
+    this.error.set(null);
+
+    this.auth.loginWithDemoAccount().subscribe({
+      next: () => void this.router.navigate(['/dashboard']),
+      error: (err: HttpErrorResponse) => {
+        this.error.set(this.extractErrorMessage(err));
+        this.loading.set(false);
+      },
+      complete: () => this.loading.set(false)
+    });
+  }
+
+  private extractErrorMessage(err: HttpErrorResponse): string {
+    if (typeof err.error?.error === 'string') {
+      return err.error.error;
+    }
+
+    if (err.status === 0) {
+      return 'Unable to reach the server. Make sure the backend is running on port 4000.';
+    }
+
+    return 'Login failed. Please try again.';
   }
 }

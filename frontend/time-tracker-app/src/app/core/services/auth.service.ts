@@ -1,37 +1,79 @@
-import { Injectable, signal } from '@angular/core';
+import { HttpClient } from '@angular/common/http';
+import { Injectable, inject, signal } from '@angular/core';
+import { Observable, catchError, map, of, tap } from 'rxjs';
 
-export interface AuthUser {
-  userId: string;
-  email: string;
-  displayName: string;
-}
+import { environment } from '../../../environments/environment';
+import {
+  ApiUser,
+  AuthResponse,
+  AuthUser,
+  LoginRequest,
+  SignupRequest
+} from '../models/auth.model';
 
-const SESSION_KEY = 'time-tracker-session';
-const DEMO_USER_ID = 'user-demo-1';
+const TOKEN_KEY = 'time-tracker-token';
+const USER_KEY = 'time-tracker-user';
+
+/** Matches server seeded demo account (see server/src/services/authService.js). */
+const DEMO_EMAIL = 'demo@timetracker.test';
+const DEMO_PASSWORD = 'Demo1234!';
 
 @Injectable({ providedIn: 'root' })
 export class AuthService {
-  readonly user = signal<AuthUser | null>(this.readSession());
+  private readonly http = inject(HttpClient);
+
+  readonly user = signal<AuthUser | null>(this.readStoredUser());
 
   isAuthenticated(): boolean {
-    return this.user() !== null;
+    return !!this.getToken() && this.user() !== null;
   }
 
-  login(email: string): void {
-    const displayName = email.split('@')[0] || 'User';
-    const session: AuthUser = {
-      userId: DEMO_USER_ID,
-      email,
-      displayName
-    };
+  getToken(): string | null {
+    return sessionStorage.getItem(TOKEN_KEY);
+  }
 
-    sessionStorage.setItem(SESSION_KEY, JSON.stringify(session));
-    this.user.set(session);
+  login(email: string, password: string): Observable<AuthUser> {
+    const body: LoginRequest = { email, password };
+    return this.http
+      .post<AuthResponse>(`${environment.apiUrl}/api/auth/login`, body)
+      .pipe(map((response) => this.applyAuthResponse(response)));
+  }
+
+  signup(payload: SignupRequest): Observable<AuthUser> {
+    return this.http
+      .post<AuthResponse>(`${environment.apiUrl}/api/auth/signup`, payload)
+      .pipe(map((response) => this.applyAuthResponse(response)));
+  }
+
+  loginWithDemoAccount(): Observable<AuthUser> {
+    return this.login(DEMO_EMAIL, DEMO_PASSWORD);
+  }
+
+  restoreSession(): Observable<void> {
+    const token = this.getToken();
+    if (!token) {
+      return of(undefined);
+    }
+
+    return this.http.get<{ user: ApiUser }>(`${environment.apiUrl}/api/auth/me`).pipe(
+      tap(({ user }) => {
+        const mapped = this.mapUser(user);
+        sessionStorage.setItem(USER_KEY, JSON.stringify(mapped));
+        this.user.set(mapped);
+      }),
+      catchError(() => {
+        this.clearSession();
+        return of(undefined);
+      }),
+      map(() => undefined)
+    );
   }
 
   logout(): void {
-    sessionStorage.removeItem(SESSION_KEY);
-    this.user.set(null);
+    this.http.post(`${environment.apiUrl}/api/auth/logout`, {}).subscribe({
+      complete: () => this.clearSession(),
+      error: () => this.clearSession()
+    });
   }
 
   initials(): string {
@@ -48,8 +90,24 @@ export class AuthService {
     return current.displayName.slice(0, 2).toUpperCase();
   }
 
-  private readSession(): AuthUser | null {
-    const raw = sessionStorage.getItem(SESSION_KEY);
+  private applyAuthResponse(response: AuthResponse): AuthUser {
+    const mapped = this.mapUser(response.user);
+    sessionStorage.setItem(TOKEN_KEY, response.token);
+    sessionStorage.setItem(USER_KEY, JSON.stringify(mapped));
+    this.user.set(mapped);
+    return mapped;
+  }
+
+  private mapUser(apiUser: ApiUser): AuthUser {
+    return {
+      userId: apiUser.id,
+      email: apiUser.email,
+      displayName: apiUser.fullName
+    };
+  }
+
+  private readStoredUser(): AuthUser | null {
+    const raw = sessionStorage.getItem(USER_KEY);
     if (!raw) {
       return null;
     }
@@ -57,8 +115,14 @@ export class AuthService {
     try {
       return JSON.parse(raw) as AuthUser;
     } catch {
-      sessionStorage.removeItem(SESSION_KEY);
+      sessionStorage.removeItem(USER_KEY);
       return null;
     }
+  }
+
+  private clearSession(): void {
+    sessionStorage.removeItem(TOKEN_KEY);
+    sessionStorage.removeItem(USER_KEY);
+    this.user.set(null);
   }
 }

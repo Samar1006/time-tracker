@@ -12,6 +12,9 @@
     />
 
     <form [formGroup]="loginForm" (ngSubmit)="onSubmit()" class="login-form__body">
+      @if (error()) {
+        <p class="login-form__alert" role="alert">{{ error() }}</p>
+      }
       <div class="form-field">
         <label class="form-field__label" for="email">Email</label>
         <input
@@ -49,7 +52,9 @@
         <a routerLink="/forgot-password">Forgot password?</a>
       </div>
 
-      <button type="submit" class="btn-primary">Log in</button>
+      <button type="submit" class="btn-primary" [disabled]="loading()">
+        {{ loading() ? 'Logging in…' : 'Log in' }}
+      </button>
 
       <div class="divider">
         <span class="divider__line"></span>

@@ -1,6 +1,7 @@
-import { Component, inject } from '@angular/core';
+import { Component, inject, signal } from '@angular/core';
 import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
 import { Router, RouterLink } from '@angular/router';
+import { HttpErrorResponse } from '@angular/common/http';
 
 import { AuthService } from '../../../../core/services/auth.service';
 import { passwordMatchValidator } from '../../validators/password-match.validator';
@@ -27,6 +28,9 @@ export class SignupComponent {
   private readonly auth = inject(AuthService);
   private readonly router = inject(Router);
 
+  readonly loading = signal(false);
+  readonly error = signal<string | null>(null);
+
   readonly signupForm = this.fb.nonNullable.group(
     {
       fullName: ['', [Validators.required, Validators.minLength(2)]],
@@ -43,14 +47,32 @@ export class SignupComponent {
       return;
     }
 
-    const { confirmPassword: _, email } = this.signupForm.getRawValue();
-    this.auth.login(email);
-    void this.router.navigate(['/dashboard']);
+    const { confirmPassword: _, ...payload } = this.signupForm.getRawValue();
+    this.loading.set(true);
+    this.error.set(null);
+
+    this.auth.signup(payload).subscribe({
+      next: () => void this.router.navigate(['/dashboard']),
+      error: (err: HttpErrorResponse) => {
+        this.error.set(this.extractErrorMessage(err));
+        this.loading.set(false);
+      },
+      complete: () => this.loading.set(false)
+    });
   }
 
   onGoogleSignIn(): void {
-    this.auth.login('demo@timetracker.app');
-    void this.router.navigate(['/dashboard']);
+    this.loading.set(true);
+    this.error.set(null);
+
+    this.auth.loginWithDemoAccount().subscribe({
+      next: () => void this.router.navigate(['/dashboard']),
+      error: (err: HttpErrorResponse) => {
+        this.error.set(this.extractErrorMessage(err));
+        this.loading.set(false);
+      },
+      complete: () => this.loading.set(false)
+    });
   }
 
   get passwordsMismatch(): boolean {
@@ -58,5 +80,17 @@ export class SignupComponent {
       this.signupForm.hasError('passwordMismatch') &&
       this.signupForm.controls.confirmPassword.touched
     );
+  }
+
+  private extractErrorMessage(err: HttpErrorResponse): string {
+    if (typeof err.error?.error === 'string') {
+      return err.error.error;
+    }
+
+    if (err.status === 0) {
+      return 'Unable to reach the server. Make sure the backend is running on port 4000.';
+    }
+
+    return 'Sign up failed. Please try again.';
   }
 }
