@@ -45,6 +45,20 @@ describe('scheduleMutationService', () => {
     const m = parseMutationTranscript('Move my meeting to June 23rd', REF);
     assert.equal(m?.action, 'move_date');
     assert.equal(m?.newDate, '2026-06-23');
+    assert.equal(m?.newStartMin, null);
+  });
+
+  it('parses move to date with start time only (duration unchanged later)', () => {
+    const m = parseMutationTranscript('Move my meeting to June 23rd at 2 pm', REF);
+    assert.equal(m?.action, 'move_date');
+    assert.equal(m?.newDate, '2026-06-23');
+    assert.equal(m?.newStartMin, 14 * 60);
+  });
+
+  it('parses move to next Friday at 9 am', () => {
+    const m = parseMutationTranscript('Move my meeting to next Friday at 9 am', REF);
+    assert.equal(m?.newDate, '2026-06-26');
+    assert.equal(m?.newStartMin, 9 * 60);
   });
 
   it('parses follow-up shift using voice context', () => {
@@ -180,6 +194,65 @@ describe('scheduleMutationService', () => {
     const friday = await loadEvents(USER, '2026-06-26');
     assert.equal(friday.length, 1);
     assert.equal(friday[0].metadata.localDate, '2026-06-26');
+
+    const today = await loadEvents(USER, VIEW);
+    assert.equal(today.length, 0);
+  });
+
+  it('move to new date with start time keeps duration', async () => {
+    resetMemoryStore();
+    await appendEvents(USER, VIEW, [{
+      id: 'evt_meeting',
+      userId: USER,
+      timestamp: `${VIEW}T15:00:00.000Z`,
+      type: 'voice',
+      title: 'meeting',
+      durationSec: 5400,
+      metadata: { localDate: VIEW, category: 'communication' },
+    }]);
+
+    const result = await applyScheduleMutation({
+      userId: USER,
+      transcript: 'Move my meeting to June 23rd at 2 pm',
+      referenceDate: REF,
+      viewDate: VIEW,
+      timeZone: 'UTC',
+    });
+
+    assert.equal(result.applied, true);
+    assert.equal(await loadEvents(USER, VIEW).then((e) => e.length), 0);
+
+    const moved = await loadEvents(USER, '2026-06-23');
+    assert.equal(moved.length, 1);
+    assert.equal(moved[0].timestamp, '2026-06-23T14:00:00.000Z');
+    assert.equal(moved[0].durationSec, 5400);
+  });
+
+  it('removes stale duplicate copies when moving across days', async () => {
+    resetMemoryStore();
+    const event = {
+      id: 'evt_meeting',
+      userId: USER,
+      timestamp: `${VIEW}T15:00:00.000Z`,
+      type: 'voice',
+      title: 'meeting',
+      durationSec: 3600,
+      metadata: { localDate: VIEW, category: 'communication' },
+    };
+    await appendEvents(USER, VIEW, [event]);
+    await appendEvents(USER, '2026-06-26', [{ ...event, metadata: { ...event.metadata, localDate: '2026-06-26' } }]);
+
+    const result = await applyScheduleMutation({
+      userId: USER,
+      transcript: 'Move my meeting to next Friday',
+      referenceDate: REF,
+      viewDate: VIEW,
+      timeZone: 'UTC',
+    });
+
+    assert.equal(result.applied, true);
+    assert.equal(await loadEvents(USER, VIEW).then((e) => e.length), 0);
+    assert.equal(await loadEvents(USER, '2026-06-26').then((e) => e.length), 1);
   });
 
   it('follow-up command reuses last event from voice context', async () => {

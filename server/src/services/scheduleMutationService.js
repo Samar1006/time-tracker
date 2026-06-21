@@ -7,10 +7,11 @@ import {
   eventOverlapsLocalDate,
   parseDateOnly,
 } from './aggregationService.js';
-import { loadEvents, replaceEvent } from './activityStore.js';
+import { loadEvents, replaceEvent, eventStorageDate } from './activityStore.js';
 import { localTimestamp } from '../utils/voiceBlockConversion.js';
 import {
   extractDurationMinutes,
+  parseSpokenClock,
   resolveCalendarDate,
   resolveDayFromSegment,
   toDateISO,
@@ -85,27 +86,42 @@ function extractTargetActivity(transcript) {
   return null;
 }
 
-/** Parse the destination day phrase after "to" in move/reschedule commands. */
+/** Parse destination day (and optional start time) after "to" in move/reschedule commands. */
 export function extractMoveDestination(transcript, referenceDate) {
   const t = transcript.trim();
   const moveRe = /\b(?:move|reschedule|shift)\s+(?:(?:my|the|a|an)\s+)?(?:(?:\w+\s+){0,4}\w+\s+|(?:it|that|this)\s+)??to\s+(.+)$/i;
   const m = t.match(moveRe);
   if (!m?.[1]) return null;
 
-  const dest = m[1].replace(/[.!?]+$/, '').trim();
+  let dest = m[1].replace(/[.!?]+$/, '').trim();
   if (!dest) return null;
 
-  const calendar = resolveCalendarDate(dest, referenceDate);
-  if (calendar?.date) return calendar.date;
+  let startMin = null;
+  const atTime = dest.match(/\bat\s+(.+)$/i);
+  if (atTime) {
+    startMin = parseSpokenClock(atTime[1]);
+    dest = dest.slice(0, atTime.index).trim();
+  }
 
-  const day = resolveDayFromSegment(dest, referenceDate, null);
+  if (!dest && startMin == null) return null;
+
+  const datePart = dest || String(referenceDate instanceof Date ? toDateISO(referenceDate) : referenceDate).slice(0, 10);
+  const calendar = resolveCalendarDate(datePart, referenceDate);
+  if (calendar?.date) {
+    return { date: calendar.date, startMin };
+  }
+
+  const day = resolveDayFromSegment(datePart, referenceDate, null);
   if (!day?.date) return null;
 
   const hasExplicitDay =
-    /\b(?:tomorrow|yesterday|next\s+|today)\b/i.test(dest)
-    || /\b(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday|mon|tue|tues|wed|thu|thur|thurs|fri|sat|sun)\b/i.test(dest);
+    /\b(?:tomorrow|yesterday|next\s+|today)\b/i.test(datePart)
+    || /\b(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday|mon|tue|tues|wed|thu|thur|thurs|fri|sat|sun)\b/i.test(datePart)
+    || /\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|\d{1,2}(?:st|nd|rd|th))\b/i.test(datePart);
 
-  return hasExplicitDay ? day.date : null;
+  if (!hasExplicitDay && startMin == null) return null;
+
+  return { date: day.date, startMin };
 }
 
 /**
@@ -114,6 +130,7 @@ export function extractMoveDestination(transcript, referenceDate) {
  *   targetActivity: string | null,
  *   deltaMin: number | null,
  *   newDate: string | null,
+ *   newStartMin: number | null,
  *   direction: 1 | -1,
  * } | null}
  */
@@ -125,13 +142,14 @@ export function parseMutationTranscript(transcript, referenceDate = new Date(), 
   const extractedTarget = extractTargetActivity(t);
   const targetActivity = resolveTargetActivity(extractedTarget, context);
 
-  const moveDate = extractMoveDestination(t, referenceDate);
-  if (moveDate) {
+  const moveDest = extractMoveDestination(t, referenceDate);
+  if (moveDest?.date) {
     return {
       action: 'move_date',
       targetActivity,
       deltaMin: null,
-      newDate: moveDate,
+      newDate: moveDest.date,
+      newStartMin: moveDest.startMin,
       direction: 1,
     };
   }
@@ -253,21 +271,22 @@ function wallClockToIso(date, minutesSinceMidnight, timeZone) {
   return localTimestamp(date, minutesSinceMidnight);
 }
 
-function applyMoveDate(event, newDate, timeZone) {
-  const localDate = parseDateOnly(event.metadata?.localDate) ?? parseDateOnly(event.timestamp);
-  if (!localDate || !newDate) return event;
+function applyMoveDate(event, newDate, timeZone, newStartMin = null) {
+  if (!newDate) return event;
 
-  const startMin = localMinutesFromTimestamp(event.timestamp, timeZone);
+  const durationSec = Number(event.durationSec) > 0 ? Number(event.durationSec) : 3600;
+  const startMin = newStartMin ?? localMinutesFromTimestamp(event.timestamp, timeZone);
+
   const next = {
     ...event,
     timestamp: wallClockToIso(newDate, startMin, timeZone),
+    durationSec,
     metadata: {
       ...(event.metadata ?? {}),
       localDate: newDate,
     },
   };
 
-  const durationSec = Number(event.durationSec) > 0 ? Number(event.durationSec) : 3600;
   const endMin = startMin + durationSec / 60;
   if (endMin > 24 * 60) {
     next.metadata.endLocalDate = addDaysISO(newDate, 1);
@@ -342,12 +361,6 @@ function buildVoiceContext(event) {
   };
 }
 
-function eventStorageDate(event) {
-  const localDate = parseDateOnly(event.metadata?.localDate);
-  if (localDate) return localDate;
-  return parseDateOnly(event.timestamp);
-}
-
 /**
  * Parse and apply a spoken schedule mutation.
  * @returns {Promise<{ applied: boolean, intent: 'mutate' | 'create', reason?: string, event?: object, operation?: object }>}
@@ -384,14 +397,28 @@ export async function applyScheduleMutation({
 
   let updated;
   if (mutation.action === 'move_date') {
-    updated = applyMoveDate(match.event, mutation.newDate, timeZone);
+    updated = applyMoveDate(match.event, mutation.newDate, timeZone, mutation.newStartMin);
   } else if (mutation.action === 'resize') {
     updated = applyResize(match.event, mutation.deltaMin ?? 60, mutation.direction, timeZone);
   } else {
     updated = applyShiftStart(match.event, mutation.deltaMin ?? 60, mutation.direction, timeZone);
   }
 
-  const saved = await replaceEvent(userId, match.storageDate, match.event.id, updated);
+  const searchDates = [
+    match.storageDate,
+    day,
+    voiceContext?.lastStorageDate,
+    mutation.newDate,
+    eventStorageDate(match.event),
+  ].filter(Boolean);
+
+  const saved = await replaceEvent(
+    userId,
+    match.storageDate,
+    match.event.id,
+    updated,
+    searchDates,
+  );
   if (!saved) {
     return { applied: false, intent: 'mutate', reason: 'update_failed' };
   }
@@ -415,5 +442,6 @@ export async function applyScheduleMutation({
 export default {
   isMutationTranscript,
   parseMutationTranscript,
+  extractMoveDestination,
   applyScheduleMutation,
 };

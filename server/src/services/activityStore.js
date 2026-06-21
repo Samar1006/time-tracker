@@ -1,7 +1,7 @@
 // activityStore.js — persist and load raw activity events for a user/day.
 
 import { deleteKey, listLength, listPush, listRange, listRangeMany, listSet } from './redisClient.js';
-import { sumTrackedSec } from './aggregationService.js';
+import { addDaysISO, sumTrackedSec } from './aggregationService.js';
 
 export const DEFAULT_USER_ID = 'user-demo-1';
 
@@ -21,6 +21,17 @@ export function eventsKey(userId, date) {
  * @property {number} [durationSec]
  * @property {Record<string, unknown>} [metadata]
  */
+
+export function eventStorageDate(event) {
+  const localDate = event.metadata?.localDate;
+  if (localDate && /^\d{4}-\d{2}-\d{2}$/.test(String(localDate))) {
+    return String(localDate);
+  }
+  const ts = event.timestamp;
+  if (!ts) return null;
+  const match = String(ts).match(/^(\d{4}-\d{2}-\d{2})/);
+  return match ? match[1] : null;
+}
 
 /**
  * @param {string} userId
@@ -70,47 +81,73 @@ export async function saveEvents(userId, date, events) {
  * @param {string} userId
  * @param {string} date
  * @param {string} eventId
- * @returns {Promise<{ event: StoredEvent, index: number } | null>}
+ * @returns {Promise<{ event: StoredEvent, index: number, storageDate: string } | null>}
  */
 export async function findEventOnDay(userId, date, eventId) {
   const events = await loadEvents(userId, date);
   const index = events.findIndex((e) => e.id === eventId);
   if (index === -1) return null;
-  return { event: events[index], index };
+  return { event: events[index], index, storageDate: date };
+}
+
+function buildSearchDates(storageDateHint, updatedEvent, extraDates = []) {
+  const anchor = storageDateHint ?? eventStorageDate(updatedEvent);
+  const dates = new Set([
+    anchor,
+    eventStorageDate(updatedEvent),
+    ...extraDates,
+  ].filter(Boolean));
+
+  if (anchor) {
+    for (let offset = -14; offset <= 14; offset += 1) {
+      dates.add(addDaysISO(anchor, offset));
+    }
+  }
+
+  return [...dates];
 }
 
 /**
- * Update one event, optionally moving it to another storage day.
- * @returns {Promise<StoredEvent | null>}
+ * Remove an event id from every searched day bucket (cleans up stale duplicates).
  */
-export async function replaceEvent(userId, fromDate, eventId, updatedEvent) {
-  const found = await findEventOnDay(userId, fromDate, eventId);
-  if (!found) return null;
-
-  const toDate = eventStorageDate(updatedEvent) ?? fromDate;
-  const events = await loadEvents(userId, fromDate);
-  const next = events.filter((e) => e.id !== eventId);
-
-  if (toDate === fromDate) {
-    next.push(updatedEvent);
-    await saveEvents(userId, fromDate, next);
-    return updatedEvent;
+async function removeEventById(userId, eventId, searchDates) {
+  let removedFrom = null;
+  for (const date of searchDates) {
+    const events = await loadEvents(userId, date);
+    if (!events.some((e) => e.id === eventId)) continue;
+    const next = events.filter((e) => e.id !== eventId);
+    await saveEvents(userId, date, next);
+    removedFrom = date;
   }
-
-  await saveEvents(userId, fromDate, next);
-  await appendEvents(userId, toDate, [updatedEvent]);
-  return updatedEvent;
+  return removedFrom;
 }
 
-function eventStorageDate(event) {
-  const localDate = event.metadata?.localDate;
-  if (localDate && /^\d{4}-\d{2}-\d{2}$/.test(String(localDate))) {
-    return String(localDate);
+/**
+ * Update one event, moving it between storage days when needed.
+ * Scans nearby days so stale copies are not left behind.
+ * @returns {Promise<StoredEvent | null>}
+ */
+export async function replaceEvent(userId, storageDateHint, eventId, updatedEvent, extraSearchDates = []) {
+  const searchDates = buildSearchDates(storageDateHint, updatedEvent, extraSearchDates);
+  let located = null;
+  for (const date of searchDates) {
+    located = await findEventOnDay(userId, date, eventId);
+    if (located) break;
   }
-  const ts = event.timestamp;
-  if (!ts) return null;
-  const match = String(ts).match(/^(\d{4}-\d{2}-\d{2})/);
-  return match ? match[1] : null;
+  if (!located) return null;
+
+  const toDate = eventStorageDate(updatedEvent) ?? located.storageDate;
+
+  // Drop every copy of this id before writing the updated event once.
+  await removeEventById(userId, eventId, searchDates);
+
+  const destEvents = toDate === located.storageDate
+    ? []
+    : await loadEvents(userId, toDate);
+  const destWithoutDup = destEvents.filter((e) => e.id !== eventId);
+  await saveEvents(userId, toDate, [...destWithoutDup, updatedEvent]);
+
+  return updatedEvent;
 }
 
 function parseStoredEvents(raw) {
@@ -153,6 +190,7 @@ export async function loadMonthDayTotals(userId, month) {
 export default {
   DEFAULT_USER_ID,
   eventsKey,
+  eventStorageDate,
   appendEvents,
   loadEvents,
   countEvents,

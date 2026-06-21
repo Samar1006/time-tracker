@@ -113,6 +113,16 @@ function parseFmt(label) {
   return null;
 }
 
+/** Parse a spoken clock phrase ("2 pm", "2:30 PM", "noon") to minutes since midnight. */
+export function parseSpokenClock(text) {
+  const normalized = normalizeSpokenTimes(String(text ?? '').trim());
+  const tokenRe = new RegExp(`\\b(${FROM_TO_TIME})\\b`, 'i');
+  const match = normalized.match(tokenRe);
+  if (!match) return null;
+  const contextPm = /\bpm\b/i.test(normalized) && !/\bam\b/i.test(normalized);
+  return toMinutes(match, contextPm);
+}
+
 function isDurationToken(seg, index, length) {
   const before = seg.slice(Math.max(0, index - 5), index).toLowerCase();
   const after = seg.slice(index + length, index + length + 12).toLowerCase();
