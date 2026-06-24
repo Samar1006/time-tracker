@@ -335,9 +335,17 @@ export class TimelineChartComponent {
     );
   });
 
-  readonly hasActivity = computed(() =>
-    this.hours().some((hour) => hour.totalTrackedSec > 0)
-  );
+  /** Snapshot while dragging so background timeline refreshes cannot drop peer blocks. */
+  private readonly frozenPositionedBlocks = signal<PositionedBlock[] | null>(null);
+
+  readonly renderBlocks = computed(() => this.frozenPositionedBlocks() ?? this.positionedBlocks());
+
+  readonly hasActivity = computed(() => {
+    if (this.renderBlocks().length > 0) {
+      return true;
+    }
+    return this.hours().some((hour) => hour.totalTrackedSec > 0);
+  });
 
   constructor() {
     effect(() => {
@@ -369,12 +377,6 @@ export class TimelineChartComponent {
         this.createLabel.set('');
       }
       this.createBusyWasTrue = busy;
-    });
-
-    effect(() => {
-      if (!this.activeDrag()) {
-        this.dragPreview.set(null);
-      }
     });
 
     effect(() => {
@@ -537,7 +539,7 @@ export class TimelineChartComponent {
 
   blockTrackKey(positioned: PositionedBlock): string {
     const { block } = positioned;
-    return `${block.eventId ?? ''}|${block.start}|${block.end}|${block.activity}|${block.category}`;
+    return `${block.eventId ?? ''}|${block.start}|${block.end}|${block.activity}|${block.category}|c${positioned.column}`;
   }
 
   blockIsEditable(block: TimelineBlock): boolean {
@@ -601,6 +603,7 @@ export class TimelineChartComponent {
     }
 
     this.hideTooltip();
+    this.frozenPositionedBlocks.set(this.positionedBlocks());
     const { startMin, endMin } = visibleBlockIntervalMinutes(
       positioned.block,
       this.date(),
@@ -660,6 +663,7 @@ export class TimelineChartComponent {
 
     this.activeDrag.set(null);
     this.dragPreview.set(null);
+    this.frozenPositionedBlocks.set(null);
     this.dragCaptureEl?.releasePointerCapture(event.pointerId);
     this.dragCaptureEl = null;
   }
@@ -701,11 +705,16 @@ export class TimelineChartComponent {
     document.removeEventListener('pointercancel', this.boundPointerUp);
   }
 
-  private cancelDrag(): void {
-    this.teardownDragListeners();
+  private clearDragState(): void {
+    this.frozenPositionedBlocks.set(null);
     this.activeDrag.set(null);
     this.dragPreview.set(null);
     this.dragCaptureEl = null;
+  }
+
+  private cancelDrag(): void {
+    this.teardownDragListeners();
+    this.clearDragState();
   }
 
   private onCreatePointerMove(event: PointerEvent): void {
