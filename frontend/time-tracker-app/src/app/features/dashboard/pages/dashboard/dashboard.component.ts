@@ -63,7 +63,9 @@ export class DashboardComponent {
         )
       ),
       switchMap(({ date, userId }) => {
-        if (!this.softRefresh()) {
+        const cached = this.cachedTimeline();
+        const keepTimelineMounted = this.softRefresh() || cached?.date === date;
+        if (!keepTimelineMounted) {
           this.loading.set(true);
         }
         this.error.set(null);
