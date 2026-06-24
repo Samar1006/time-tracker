@@ -55,7 +55,7 @@
             <p class="day-calendar__empty">No activity logged for this day yet.</p>
           }
 
-          @for (positioned of positionedBlocks(); track blockTrackKey(positioned)) {
+          @for (positioned of renderBlocks(); track blockTrackKey(positioned)) {
             @if (blockIsEditable(positioned.block)) {
               <div
                 class="day-calendar__event day-calendar__event--editable"

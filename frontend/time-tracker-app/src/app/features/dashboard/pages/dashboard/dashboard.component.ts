@@ -63,7 +63,10 @@ export class DashboardComponent {
         )
       ),
       switchMap(({ date, userId }) => {
-        if (!this.softRefresh()) {
+        const cached = this.cachedTimeline();
+        const hasCachedForDate = cached?.date === date;
+        const keepTimelineMounted = this.softRefresh() || hasCachedForDate;
+        if (!keepTimelineMounted) {
           this.loading.set(true);
         }
         this.error.set(null);
@@ -77,8 +80,8 @@ export class DashboardComponent {
         return this.timelineService.getTimeline(userId, date).pipe(
           timeout(API_TIMEOUT_MS),
           catchError(() => {
-            if (this.softRefresh() && this.cachedTimeline()) {
-              return of(this.cachedTimeline());
+            if (hasCachedForDate && cached) {
+              return of(cached);
             }
             return of(null);
           }),
@@ -88,8 +91,7 @@ export class DashboardComponent {
               return { timeline };
             }
 
-            const cached = this.cachedTimeline();
-            if (cached && this.softRefresh()) {
+            if (hasCachedForDate && cached) {
               return { timeline: cached };
             }
 

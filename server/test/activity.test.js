@@ -263,6 +263,52 @@ describe('activity routes (API contract)', () => {
     assert.equal(block.durationSec, 1800);
   });
 
+  it('PATCH /api/events/:eventId keeps other events on the same day', async () => {
+    const first = await request('/api/events', {
+      method: 'POST',
+      headers: bearer(token),
+      body: {
+        timestamp: `${DATE}T09:00:00.000Z`,
+        type: 'manual',
+        title: 'Block A',
+        durationSec: 3600,
+        metadata: { localDate: DATE },
+      },
+    });
+    const second = await request('/api/events', {
+      method: 'POST',
+      headers: bearer(token),
+      body: {
+        timestamp: `${DATE}T11:00:00.000Z`,
+        type: 'manual',
+        title: 'Block B',
+        durationSec: 1800,
+        metadata: { localDate: DATE },
+      },
+    });
+    assert.equal(first.status, 201);
+    assert.equal(second.status, 201);
+    const eventId = second.body.ids[0];
+
+    const patch = await request(`/api/events/${eventId}?timezone=UTC`, {
+      method: 'PATCH',
+      headers: bearer(token),
+      body: {
+        timestamp: `${DATE}T12:00:00.000Z`,
+        durationSec: 1800,
+        metadata: { localDate: DATE },
+      },
+    });
+    assert.equal(patch.status, 200);
+
+    const after = await request(`/api/timeline?date=${DATE}&timezone=UTC`, {
+      headers: bearer(token),
+    });
+    const activities = after.body.hours.flatMap((hour) => hour.blocks.map((block) => block.activity));
+    assert.equal(activities.includes('Block A'), true);
+    assert.equal(activities.includes('Block B'), true);
+  });
+
   it('PATCH /api/events/:eventId rejects browser-tracked domain_visit events', async () => {
     const ingest = await request('/api/events', {
       method: 'POST',

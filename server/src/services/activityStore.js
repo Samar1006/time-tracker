@@ -166,9 +166,7 @@ export async function replaceEvent(userId, storageDateHint, eventId, updatedEven
   // Drop every copy of this id before writing the updated event once.
   await removeEventById(userId, eventId, searchDates);
 
-  const destEvents = toDate === located.storageDate
-    ? []
-    : await loadEvents(userId, toDate);
+  const destEvents = await loadEvents(userId, toDate);
   const destWithoutDup = destEvents.filter((e) => e.id !== eventId);
   await saveEvents(userId, toDate, [...destWithoutDup, updatedEvent]);
 
