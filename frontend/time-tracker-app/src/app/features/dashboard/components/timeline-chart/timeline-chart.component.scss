@@ -166,8 +166,9 @@
 }
 
 .day-calendar__event--drag-source {
-  visibility: hidden;
+  opacity: 0.35;
   pointer-events: none;
+  z-index: 1;
 }
 
 .day-calendar__event--preview {

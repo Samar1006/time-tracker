@@ -15,7 +15,6 @@ import {
   RESIZE_HANDLE_PX,
   buildCreateEventDraft,
   buildEventTimePatch,
-  visibleBlockIntervalMinutes,
   clampCreateDragInterval,
   clampIntervalToDay,
   deltaPxToMinutes,
@@ -372,13 +371,10 @@ export class TimelineChartComponent {
     });
 
     effect(() => {
+      this.hours();
       if (!this.activeDrag()) {
         this.dragPreview.set(null);
       }
-    });
-
-    effect(() => {
-      this.hours();
       if (!this.activeCreateDrag()) {
         this.createPreview.set(null);
       }
@@ -546,7 +542,7 @@ export class TimelineChartComponent {
 
   isDraggingBlock(positioned: PositionedBlock): boolean {
     const drag = this.activeDrag();
-    return drag ? this.blockTrackKey(drag.positioned) === this.blockTrackKey(positioned) : false;
+    return drag?.positioned.block.eventId === positioned.block.eventId;
   }
 
   onResizeHandleDown(event: PointerEvent, positioned: PositionedBlock, mode: DragMode): void {
@@ -601,11 +597,7 @@ export class TimelineChartComponent {
     }
 
     this.hideTooltip();
-    const { startMin, endMin } = visibleBlockIntervalMinutes(
-      positioned.block,
-      this.date(),
-      (iso, viewDate) => minutesOnViewDate(iso, viewDate, this.timezone())
-    );
+    const { startMin, endMin } = this.blockIntervalMinutes(positioned.block);
     this.activeDrag.set({
       positioned,
       mode,
@@ -659,7 +651,6 @@ export class TimelineChartComponent {
     }
 
     this.activeDrag.set(null);
-    this.dragPreview.set(null);
     this.dragCaptureEl?.releasePointerCapture(event.pointerId);
     this.dragCaptureEl = null;
   }
@@ -693,6 +684,19 @@ export class TimelineChartComponent {
       startMin: clamped.startMin,
       endMin: clamped.endMin
     });
+  }
+
+  private blockIntervalMinutes(block: TimelineBlock): { startMin: number; endMin: number } {
+    const viewDate = this.date();
+    const timeZone = this.timezone();
+    const eventStartIso = block.eventStart ?? block.start;
+    const eventEndIso = block.eventEnd ?? block.end;
+    const startMin = minutesOnViewDate(eventStartIso, viewDate, timeZone);
+    let endMin = minutesOnViewDate(eventEndIso, viewDate, timeZone);
+    if (endMin <= startMin) {
+      endMin = startMin + blockFullDurationSec(block) / 60;
+    }
+    return clampIntervalToDay(startMin, endMin);
   }
 
   private teardownDragListeners(): void {

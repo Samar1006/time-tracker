@@ -106,27 +106,6 @@ export function buildCreateEventDraft(
   };
 }
 
-/** Visible slice on the viewed day (matches layoutVerticalBlocks clipping). */
-export function visibleBlockIntervalMinutes(
-  block: TimelineBlock,
-  viewDate: string,
-  minutesOnViewDate: (iso: string, viewDate: string) => number,
-  rangeStartMin = 0,
-  rangeSpanMin = MINUTES_PER_DAY
-): { startMin: number; endMin: number } {
-  const startMin = minutesOnViewDate(block.start, viewDate);
-  let endMin = minutesOnViewDate(block.end, viewDate);
-  if (endMin <= startMin && block.durationSec > 0) {
-    endMin = startMin + block.durationSec / 60;
-  }
-  const clipStart = Math.max(startMin, rangeStartMin);
-  const clipEnd = Math.min(endMin, rangeStartMin + rangeSpanMin);
-  if (clipEnd <= clipStart) {
-    return { startMin: clipStart, endMin: clipStart };
-  }
-  return { startMin: clipStart, endMin: clipEnd };
-}
-
 export function buildEventTimePatch(
   block: TimelineBlock,
   viewDate: string,
@@ -139,8 +118,8 @@ export function buildEventTimePatch(
   }
 
   const eventStartIso = block.eventStart ?? block.start;
-  const origSliceStartMin = minutesOnViewDate(block.start, viewDate);
-  const deltaStartMin = startMin - origSliceStartMin;
+  const origStartMin = minutesOnViewDate(eventStartIso, viewDate);
+  const deltaStartMin = startMin - origStartMin;
   const durationSec = Math.round((endMin - startMin) * 60);
 
   const timestamp = new Date(Date.parse(eventStartIso) + deltaStartMin * 60 * 1000).toISOString();
