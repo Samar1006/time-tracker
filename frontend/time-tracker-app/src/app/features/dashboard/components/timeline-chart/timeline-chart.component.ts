@@ -268,6 +268,7 @@ export class TimelineChartComponent {
   private skipCreateLabelBlur = false;
   private createBusyWasTrue = false;
   private labelBlurReady = false;
+  private createLabelFocusKey = 0;
   private pinchStartScale = MIN_ZOOM;
   private pointerAnchorY = 0;
   private savedScrollTop = 0;
@@ -347,22 +348,17 @@ export class TimelineChartComponent {
     });
 
     effect(() => {
-      if (!this.labelingCreate()) {
+      const labeling = this.labelingCreate();
+      if (!labeling) {
         this.labelBlurReady = false;
         return;
       }
-      this.labelBlurReady = false;
-      afterNextRender(() => {
-        const input = this.createLabelInput()?.nativeElement;
-        if (!input) {
-          return;
-        }
-        input.focus();
-        input.select();
-        window.setTimeout(() => {
-          this.labelBlurReady = true;
-        }, 200);
-      });
+      const focusKey = this.createLabelFocusKey;
+      const inputRef = this.createLabelInput();
+      if (!inputRef?.nativeElement.isConnected) {
+        return;
+      }
+      untracked(() => this.queueCreateLabelFocus(focusKey));
     });
 
     effect(() => {
@@ -733,17 +729,38 @@ export class TimelineChartComponent {
       return;
     }
 
+    event.preventDefault();
+
     this.activeCreateDrag.set(null);
     this.createPreview.set(null);
     this.createCaptureEl?.releasePointerCapture(event.pointerId);
     this.createCaptureEl = null;
 
+    this.beginLabelingCreate(preview);
+  }
+
+  private beginLabelingCreate(preview: CreatePreview): void {
+    this.createLabelFocusKey += 1;
+    const focusKey = this.createLabelFocusKey;
+    this.labelBlurReady = false;
+    this.labelingCreate.set(null);
     this.createLabel.set('');
-    this.labelingCreate.set({ ...preview });
+
+    window.setTimeout(() => {
+      if (focusKey !== this.createLabelFocusKey) {
+        return;
+      }
+      this.labelingCreate.set({ ...preview });
+      this.queueCreateLabelFocus(focusKey);
+    }, 0);
   }
 
   confirmActivityLabel(event?: Event): void {
     event?.preventDefault();
+
+    if (this.createBusy()) {
+      return;
+    }
 
     const labeling = this.labelingCreate();
     if (!labeling) {
@@ -763,6 +780,7 @@ export class TimelineChartComponent {
   }
 
   cancelActivityLabel(): void {
+    this.createLabelFocusKey += 1;
     this.skipCreateLabelBlur = true;
     this.labelBlurReady = false;
     this.labelingCreate.set(null);
@@ -783,6 +801,8 @@ export class TimelineChartComponent {
   onCreateLabelKeydown(event: KeyboardEvent): void {
     event.stopPropagation();
     if (event.key === 'Enter') {
+      event.preventDefault();
+      this.skipCreateLabelBlur = true;
       this.confirmActivityLabel(event);
     } else if (event.key === 'Escape') {
       event.preventDefault();
@@ -790,9 +810,29 @@ export class TimelineChartComponent {
     }
   }
 
-  createLabelDraftTitle(): string {
-    const trimmed = this.createLabel().trim();
-    return trimmed || 'New activity';
+  private queueCreateLabelFocus(focusKey: number, attempt = 0): void {
+    if (focusKey !== this.createLabelFocusKey || !this.labelingCreate()) {
+      return;
+    }
+
+    const input = this.createLabelInput()?.nativeElement;
+    if (input?.isConnected) {
+      input.focus({ preventScroll: true });
+      input.select();
+      window.setTimeout(() => {
+        if (focusKey === this.createLabelFocusKey) {
+          this.labelBlurReady = true;
+        }
+      }, 250);
+      return;
+    }
+
+    if (attempt < 20) {
+      window.setTimeout(
+        () => this.queueCreateLabelFocus(focusKey, attempt + 1),
+        attempt < 5 ? 0 : 16
+      );
+    }
   }
 
   private updateCreatePreview(currentMin: number): void {
