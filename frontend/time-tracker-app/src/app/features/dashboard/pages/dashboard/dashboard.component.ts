@@ -33,6 +33,13 @@ import {
   shiftDate,
   toDateInputValue
 } from '../../utils/dashboard-stats.util';
+import {
+  applyDayShiftToTimelineCache,
+  applyEventCreateToTimeline,
+  applyEventTimeChangeToTimeline,
+  emptyTimelineForDate,
+  removeEventFromTimeline
+} from '../../utils/timeline-optimistic.util';
 
 const API_TIMEOUT_MS = 8_000;
 const REFRESH_MS = 60_000;
@@ -134,13 +141,21 @@ export class DashboardComponent {
   readonly timeline = computed(() => this.dashboardState().timeline);
   readonly displayTimeline = computed(() => {
     const viewDate = this.selectedDate();
+    const cached = this.timelineByDate().get(viewDate);
+    if (cached) {
+      return cached;
+    }
     const current = this.timeline();
     if (current?.date === viewDate) {
       return current;
     }
-    const cached = this.timelineByDate().get(viewDate);
-    if (cached) {
-      return cached;
+    if (this.hasLoadedTimeline()) {
+      const userId = this.userId() ?? '';
+      const timezone =
+        current?.timezone ??
+        [...this.timelineByDate().values()].find((entry) => entry.timezone)?.timezone ??
+        'UTC';
+      return emptyTimelineForDate(viewDate, timezone, userId);
     }
     return null;
   });
@@ -189,6 +204,18 @@ export class DashboardComponent {
     this.patchError.set(null);
     this.softRefresh.set(true);
 
+    this.preservedSelectionIds.update((ids) =>
+      ids.includes(change.next.eventId) ? ids : [...ids, change.next.eventId]
+    );
+
+    const timeline = this.displayTimeline();
+    if (timeline) {
+      this.setTimelineCache(
+        viewDate,
+        applyEventTimeChangeToTimeline(timeline, change)
+      );
+    }
+
     this.timelineService
       .updateEvent(change.next.eventId, {
         timestamp: change.next.timestamp,
@@ -197,12 +224,7 @@ export class DashboardComponent {
       })
       .subscribe({
         next: () => {
-          this.invalidateTimelineCache(
-            viewDate,
-            change.previous.metadata.localDate,
-            change.next.metadata.localDate
-          );
-          this.reloadTick.update((n) => n + 1);
+          this.softRefresh.set(false);
           this.undoService.record({
             label: change.label,
             viewDate,
@@ -211,6 +233,13 @@ export class DashboardComponent {
           });
         },
         error: () => {
+          const current = this.displayTimeline();
+          if (current) {
+            this.setTimelineCache(
+              viewDate,
+              applyEventTimeChangeToTimeline(current, { next: change.previous })
+            );
+          }
           this.softRefresh.set(false);
           this.patchError.set('Could not save timeline change. Your edit was reverted.');
         }
@@ -230,6 +259,18 @@ export class DashboardComponent {
       .filter((id): id is string => Boolean(id));
     this.preservedSelectionIds.set(selectionIds);
 
+    const timeline = this.displayTimeline();
+    this.timelineByDate.update((entries) =>
+      applyDayShiftToTimelineCache(
+        entries,
+        payload.sourceDate,
+        payload.targetDate,
+        payload.changes,
+        timeline,
+        this.userId() ?? ''
+      )
+    );
+
     if (this.selectedDate() !== payload.targetDate) {
       this.selectedDate.set(payload.targetDate);
     }
@@ -244,9 +285,7 @@ export class DashboardComponent {
       )
     ).subscribe({
       next: () => {
-        this.invalidateTimelineCache(payload.sourceDate, payload.targetDate);
-        this.softRefresh.set(true);
-        this.reloadTick.update((n) => n + 1);
+        this.softRefresh.set(false);
         for (const change of payload.changes) {
           this.undoService.record({
             label: change.label,
@@ -257,6 +296,20 @@ export class DashboardComponent {
         }
       },
       error: () => {
+        this.timelineByDate.update((entries) =>
+          applyDayShiftToTimelineCache(
+            entries,
+            payload.targetDate,
+            payload.sourceDate,
+            payload.changes.map((change) => ({ next: change.previous })),
+            this.displayTimeline(),
+            this.userId() ?? ''
+          )
+        );
+        if (this.selectedDate() !== payload.sourceDate) {
+          this.selectedDate.set(payload.sourceDate);
+        }
+        this.preservedSelectionIds.set([]);
         this.softRefresh.set(false);
         this.patchError.set('Could not save timeline change. Your edit was reverted.');
       }
@@ -266,15 +319,26 @@ export class DashboardComponent {
   onActivityCreate(draft: EventCreateDraft): void {
     const viewDate = this.selectedDate();
     this.patchError.set(null);
-    this.softRefresh.set(true);
     this.createBusy.set(true);
+
+    const pendingId = `pending-${Date.now()}`;
+    const timeline = this.displayTimeline();
+    if (timeline) {
+      this.setTimelineCache(viewDate, applyEventCreateToTimeline(timeline, draft, pendingId));
+    }
 
     this.timelineService.createEvent(draft).subscribe({
       next: (response) => {
-        this.reloadTick.update((n) => n + 1);
         const createdId = response.ids[0];
         if (!createdId) {
           return;
+        }
+
+        const current = this.displayTimeline();
+        if (current) {
+          let updated = removeEventFromTimeline(current, pendingId);
+          updated = applyEventCreateToTimeline(updated, draft, createdId);
+          this.setTimelineCache(viewDate, updated);
         }
 
         let currentId = createdId;
@@ -289,7 +353,10 @@ export class DashboardComponent {
         });
       },
       error: () => {
-        this.softRefresh.set(false);
+        const current = this.displayTimeline();
+        if (current) {
+          this.setTimelineCache(viewDate, removeEventFromTimeline(current, pendingId));
+        }
         this.patchError.set('Could not create activity. Try again.');
       },
       complete: () => this.createBusy.set(false)
@@ -308,7 +375,11 @@ export class DashboardComponent {
   }
 
   onBlockDelete(payload: BlockDeletePayload): void {
-    if (!this.userId()) {
+    this.onBlocksDelete([payload]);
+  }
+
+  onBlocksDelete(payloads: BlockDeletePayload[]): void {
+    if (!this.userId() || payloads.length === 0) {
       return;
     }
 
@@ -316,28 +387,44 @@ export class DashboardComponent {
     this.patchError.set(null);
     this.softRefresh.set(true);
 
-    this.timelineService.deleteEvent(payload.eventId, viewDate).subscribe({
+    forkJoin(
+      payloads.map((payload) => this.timelineService.deleteEvent(payload.eventId, viewDate))
+    ).subscribe({
       next: () => {
         this.reloadTick.update((n) => n + 1);
 
-        let restoredId: string | undefined;
+        const restores = payloads.map((payload) => payload.restore);
+        const restoredIds: string[] = [];
+        const label =
+          payloads.length === 1 ? 'Delete block' : `Delete ${payloads.length} blocks`;
+
         this.undoService.record({
-          label: 'Delete block',
+          label,
           viewDate,
           undo: async () => {
-            const res = await this.createEventForUndo(payload.restore);
-            restoredId = res.ids[0];
+            restoredIds.length = 0;
+            for (const restore of restores) {
+              const res = await this.createEventForUndo(restore);
+              const id = res.ids[0];
+              if (id) {
+                restoredIds.push(id);
+              }
+            }
           },
           redo: async () => {
-            if (restoredId) {
-              await this.deleteEventForUndo(restoredId, viewDate);
+            for (const id of restoredIds) {
+              await this.deleteEventForUndo(id, viewDate);
             }
           }
         });
       },
       error: () => {
         this.softRefresh.set(false);
-        this.patchError.set('Could not delete this time block.');
+        this.patchError.set(
+          payloads.length === 1
+            ? 'Could not delete this time block.'
+            : 'Could not delete the selected time blocks.'
+        );
       }
     });
   }
@@ -418,6 +505,14 @@ export class DashboardComponent {
     if (viewDate !== this.selectedDate()) {
       this.selectedDate.set(viewDate);
     }
+  }
+
+  private setTimelineCache(date: string, timeline: TimelineResponse): void {
+    this.timelineByDate.update((entries) => {
+      const next = new Map(entries);
+      next.set(date, timeline);
+      return next;
+    });
   }
 
   private invalidateTimelineCache(...dates: string[]): void {

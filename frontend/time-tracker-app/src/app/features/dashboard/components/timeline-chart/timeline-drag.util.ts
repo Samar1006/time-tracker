@@ -2,8 +2,8 @@ import { CreateEventPayload } from '../../../../core/services/timeline.service';
 import { TimelineBlock } from '../../../../core/models/timeline.model';
 import { localTimestamp } from '../../../../core/utils/voice-block.util';
 
-export const SNAP_MINUTES = 5;
-export const MIN_DURATION_MINUTES = 5;
+export const SNAP_MINUTES = 15;
+export const MIN_DURATION_MINUTES = 15;
 export const DEFAULT_CREATE_DURATION_MINUTES = 60;
 export const MINUTES_PER_DAY = 24 * 60;
 export const RESIZE_HANDLE_PX = 8;
@@ -47,7 +47,7 @@ export interface EventCreateDraft {
   };
 }
 
-/** Round to nearest 5-minute grid (9:07 → 9:05, 9:08 → 9:10). */
+/** Round to nearest 15-minute grid (9:07 → 9:00, 9:08 → 9:15). */
 export function snapMinutes(minutes: number): number {
   return Math.round(minutes / SNAP_MINUTES) * SNAP_MINUTES;
 }
@@ -81,6 +81,20 @@ export function clampIntervalToDay(
   end = Math.min(MINUTES_PER_DAY, Math.max(start + MIN_DURATION_MINUTES, end));
 
   return { startMin: start, endMin: end };
+}
+
+/** Minutes to shift a group so the earliest start (top) or latest end (bottom) hits the day edge. */
+export function groupEdgeShiftDeltaMinutes(
+  intervals: readonly { startMin: number; endMin: number }[],
+  edge: 'top' | 'bottom'
+): number {
+  if (intervals.length === 0) {
+    return 0;
+  }
+  if (edge === 'top') {
+    return -Math.min(...intervals.map((interval) => interval.startMin));
+  }
+  return MINUTES_PER_DAY - Math.max(...intervals.map((interval) => interval.endMin));
 }
 
 /** Vertical pointer delta in px → minutes on the day column. */

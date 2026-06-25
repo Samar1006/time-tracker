@@ -41,6 +41,7 @@ import {
   defaultCreateInterval,
   clampIntervalToDay,
   deltaPxToMinutes,
+  groupEdgeShiftDeltaMinutes,
   offsetYToMinutes
 } from './timeline-drag.util';
 
@@ -88,7 +89,11 @@ const MAX_ZOOM = 12;
 /** Per keypress when using - / + to zoom the timeline. */
 const KEYBOARD_ZOOM_FACTOR = 1.2;
 /** Matches .day-calendar__layout vertical padding (0.5rem + 0.75rem at 16px root). */
-const LAYOUT_PADDING_Y_PX = 20;
+const LAYOUT_PADDING_TOP_PX = 8;
+const LAYOUT_PADDING_BOTTOM_PX = 12;
+const LAYOUT_PADDING_Y_PX = LAYOUT_PADDING_TOP_PX + LAYOUT_PADDING_BOTTOM_PX;
+/** Min hours of timeline kept visible above/below selection when moving with j/k (vim scrolloff). */
+const SCROLL_OFF_HOURS = 2;
 const BASE_DAY_HEIGHT_PX = HOURS_PER_DAY * BASE_PX_PER_HOUR;
 /** Trackpad pinch fires wheel+ctrlKey; tuned for gesture deltas, not mouse wheel. */
 const PINCH_ZOOM_SENSITIVITY = 0.005;
@@ -526,6 +531,7 @@ export class TimelineChartComponent {
   readonly eventTimeChange = output<EventTimeChangePayload>();
   readonly activityCreate = output<EventCreateDraft>();
   readonly blockDelete = output<BlockDeletePayload>();
+  readonly blocksDelete = output<BlockDeletePayload[]>();
   readonly blocksDayShift = output<BlocksDayShiftPayload>();
   readonly blocksSelectionChange = output<TimelineBlock[]>();
 
@@ -544,6 +550,8 @@ export class TimelineChartComponent {
   private pinchStartScale = DEFAULT_ZOOM;
   private pointerAnchorY = 0;
   private savedScrollTop = 0;
+  /** Scroll position as a fraction of max scroll (0–1), stable across day changes at the same zoom. */
+  private savedScrollRatio = 0;
   private stableDate = '';
   private scrollRestorePending = false;
   private pendingDateChange = false;
@@ -590,8 +598,14 @@ export class TimelineChartComponent {
   private scrollHoldLastTime = 0;
   private scrollHoldArmTimer: ReturnType<typeof setTimeout> | null = null;
   private scrollHoldContainer: HTMLElement | null = null;
-  private pendingScrollKey: { direction: 1 | -1; el: HTMLElement; holdStarted: boolean } | null = null;
+  private pendingScrollKey: {
+    direction: 1 | -1;
+    el: HTMLElement;
+    holdStarted: boolean;
+    hours: number;
+  } | null = null;
   private pendingFirstGTimer: ReturnType<typeof setTimeout> | null = null;
+  private pendingMotionCount = '';
   private readonly boundScrollKeyUp = (event: KeyboardEvent) => {
     const key = event.key.toLowerCase();
     if (key !== 'j' && key !== 'k') {
@@ -600,7 +614,10 @@ export class TimelineChartComponent {
 
     const pending = this.pendingScrollKey;
     if (pending && !pending.holdStarted) {
-      this.animateTimelineScroll(pending.el, pending.direction * this.pxPerHour());
+      this.animateTimelineScroll(
+        pending.el,
+        pending.direction * this.pxPerHour() * pending.hours
+      );
     }
 
     this.pendingScrollKey = null;
@@ -644,13 +661,6 @@ export class TimelineChartComponent {
   private readonly frozenPositionedBlocks = signal<PositionedBlock[] | null>(null);
 
   readonly renderBlocks = computed(() => this.frozenPositionedBlocks() ?? this.positionedBlocks());
-
-  readonly hasActivity = computed(() => {
-    if (this.renderBlocks().length > 0) {
-      return true;
-    }
-    return this.hours().some((hour) => hour.totalTrackedSec > 0);
-  });
 
   constructor() {
     effect(() => {
@@ -700,11 +710,6 @@ export class TimelineChartComponent {
       }
 
       const dateChanged = date !== this.stableDate;
-      const el = untracked(() => this.scrollContainer()?.nativeElement);
-
-      if (!dateChanged && el) {
-        this.savedScrollTop = el.scrollTop;
-      }
 
       this.pendingDateChange = dateChanged;
       this.pendingDate = date;
@@ -718,12 +723,20 @@ export class TimelineChartComponent {
 
     effect(() => {
       const preserved = this.preservedSelectionIds();
-      this.hours();
       this.date();
       if (preserved.length === 0) {
         return;
       }
       untracked(() => this.applyPreservedSelection(preserved));
+    });
+
+    effect(() => {
+      this.renderBlocks();
+      const eventIds = this.selectedEventIds();
+      if (eventIds.size === 0) {
+        return;
+      }
+      untracked(() => this.refreshSelectionKeysFromEventIds(eventIds));
     });
 
     effect(() => {
@@ -736,15 +749,14 @@ export class TimelineChartComponent {
       }
 
       untracked(() => {
-        if (this.refreshSelectionKeysFromEventIds(eventIds)) {
-          this.pendingReselectTargetDate.set(null);
-        }
+        this.refreshSelectionKeysFromEventIds(eventIds);
       });
     });
 
     this.destroyRef.onDestroy(() => {
       this.teardownPendingBlockListeners();
       this.cancelPendingFirstG();
+      this.clearPendingMotionCount();
       this.pendingScrollKey = null;
       this.stopContinuousScroll();
       this.cancelScrollAnimation();
@@ -765,6 +777,11 @@ export class TimelineChartComponent {
       syncViewport();
       this.scrollResizeObserver = new ResizeObserver(syncViewport);
       this.scrollResizeObserver.observe(el);
+      this.saveScrollViewport(el);
+
+      const onScroll = () => this.saveScrollViewport(el);
+      el.addEventListener('scroll', onScroll, { passive: true });
+      this.destroyRef.onDestroy(() => el.removeEventListener('scroll', onScroll));
     });
 
     afterEveryRender(() => {
@@ -780,14 +797,38 @@ export class TimelineChartComponent {
       this.scrollRestorePending = false;
 
       if (this.pendingDateChange) {
-        container.scrollTop = 0;
+        this.restoreScrollViewport(container);
         this.stableDate = this.pendingDate;
         this.cancelActivityLabel();
+        const targetDate = this.pendingReselectTargetDate();
+        if (targetDate && targetDate === this.stableDate) {
+          const eventIds = this.selectedEventIds();
+          if (eventIds.size > 0) {
+            this.refreshSelectionKeysFromEventIds(eventIds);
+            this.emitSelectionChange();
+          }
+          this.pendingReselectTargetDate.set(null);
+        }
         return;
       }
 
-      container.scrollTop = this.savedScrollTop;
+      this.restoreScrollViewport(container);
     });
+  }
+
+  private saveScrollViewport(el: HTMLElement): void {
+    const maxTop = el.scrollHeight - el.clientHeight;
+    this.savedScrollTop = el.scrollTop;
+    this.savedScrollRatio = maxTop > 0 ? el.scrollTop / maxTop : 0;
+  }
+
+  private restoreScrollViewport(el: HTMLElement): void {
+    const maxTop = el.scrollHeight - el.clientHeight;
+    if (maxTop <= 0) {
+      el.scrollTop = 0;
+      return;
+    }
+    el.scrollTop = Math.min(maxTop, Math.max(0, this.savedScrollRatio * maxTop));
   }
 
   formatBlockDuration(seconds: number): string {
@@ -910,7 +951,10 @@ export class TimelineChartComponent {
 
   blockTrackKey(positioned: PositionedBlock): string {
     const { block } = positioned;
-    return `${block.eventId ?? ''}|${block.start}|${block.end}|${block.activity}|${block.category}|c${positioned.column}`;
+    if (block.eventId) {
+      return block.eventId;
+    }
+    return `${block.start}|${block.end}|${block.activity}|${block.category}`;
   }
 
   blockIsEditable(block: TimelineBlock): boolean {
@@ -931,10 +975,15 @@ export class TimelineChartComponent {
       this.cancelPendingFirstG();
     }
 
+    if (this.pendingMotionCount && !this.isMotionCountDigit(event.key) && !this.isJKKey(event.key)) {
+      this.clearPendingMotionCount();
+    }
+
     if (event.key === 'Escape') {
       if (this.contextMenu() || this.labelingCreate()) {
         return;
       }
+      this.clearPendingMotionCount();
       this.clearSelection();
       return;
     }
@@ -958,12 +1007,27 @@ export class TimelineChartComponent {
       return;
     }
 
+    if (this.handleMotionCountKey(event)) {
+      return;
+    }
+
     const nudgeDelta = this.nudgeKeyDelta(event.key);
     if (nudgeDelta !== null) {
+      const motion = this.isJKKey(event.key)
+        ? this.consumeMotionCount()
+        : { hours: 1, prefixed: false };
       if (this.hasNudgeableSelection()) {
-        this.nudgeSelectedBlocks(nudgeDelta, event);
+        const deltaMin = this.isJKKey(event.key)
+          ? motion.hours * MINUTES_PER_HOUR * (nudgeDelta > 0 ? 1 : -1)
+          : nudgeDelta;
+        this.nudgeSelectedBlocks(deltaMin, event, this.isJKKey(event.key));
       } else if (this.isJKKey(event.key)) {
-        this.scrollTimeline(nudgeDelta > 0 ? 1 : -1, event);
+        this.scrollTimeline(
+          nudgeDelta > 0 ? 1 : -1,
+          event,
+          motion.hours,
+          motion.prefixed
+        );
       }
     }
   }
@@ -1130,6 +1194,7 @@ export class TimelineChartComponent {
       }
 
       const label = drag.mode === 'move' ? 'Move block' : 'Resize block';
+      this.keepEventSelected(drag.positioned.block.eventId);
       this.eventTimeChange.emit({ label, previous, next });
     } catch {
       this.cancelDrag();
@@ -1250,11 +1315,11 @@ export class TimelineChartComponent {
     const title = this.createLabel().trim() || 'New activity';
 
     try {
-      this.labelingCreate.set(null);
-      this.createLabel.set('');
       this.activityCreate.emit(
         buildCreateEventDraft(this.date(), labeling.startMin, labeling.endMin, title)
       );
+      this.labelingCreate.set(null);
+      this.createLabel.set('');
     } catch {
       this.cancelActivityLabel();
       return;
@@ -1451,6 +1516,19 @@ export class TimelineChartComponent {
     }
   }
 
+  private keepEventSelected(eventId: string | undefined): void {
+    if (!eventId) {
+      return;
+    }
+
+    const eventIds = new Set(this.selectedEventIds());
+    eventIds.add(eventId);
+    this.selectedEventIds.set(eventIds);
+    if (!this.refreshSelectionKeysFromEventIds(eventIds)) {
+      this.emitSelectionChange();
+    }
+  }
+
   private clearSelection(): void {
     if (this.selectedBlockKeys().size === 0 && this.selectedEventIds().size === 0) {
       return;
@@ -1478,17 +1556,15 @@ export class TimelineChartComponent {
     this.hideTooltip();
 
     const viewDate = this.date();
-    for (const block of deletable) {
-      const eventId = block.eventId!;
-      this.blockDelete.emit({
-        eventId,
-        restore: buildRestorePayloadFromBlock(block, viewDate)
-      });
-    }
+    const payloads = deletable.map((block) => ({
+      eventId: block.eventId!,
+      restore: buildRestorePayloadFromBlock(block, viewDate)
+    }));
+    this.blocksDelete.emit(payloads);
     this.clearSelection();
   }
 
-  private nudgeSelectedBlocks(deltaMin: number, event: KeyboardEvent): void {
+  private nudgeSelectedBlocks(deltaMin: number, event: KeyboardEvent, smoothScroll = false): void {
     if (this.blocksKeyboardBlocked() || !this.hasNudgeableSelection()) {
       return;
     }
@@ -1508,12 +1584,17 @@ export class TimelineChartComponent {
       minutesOnViewDate(iso, viewDate, this.timezone());
 
     let moved = 0;
+    let selectionStartMin = MINUTES_PER_DAY;
+    let selectionEndMin = 0;
     for (const block of blocks) {
       const interval = visibleBlockIntervalMinutes(block, this.date(), minutesOnView);
       const clamped = clampIntervalToDay(interval.startMin + deltaMin, interval.endMin + deltaMin);
       if (clamped.startMin === interval.startMin && clamped.endMin === interval.endMin) {
         continue;
       }
+
+      selectionStartMin = Math.min(selectionStartMin, clamped.startMin);
+      selectionEndMin = Math.max(selectionEndMin, clamped.endMin);
 
       try {
         const previous = buildEventTimePatch(
@@ -1531,6 +1612,7 @@ export class TimelineChartComponent {
           minutesOnView
         );
         this.eventTimeChange.emit({ label: 'Move block', previous, next });
+        this.keepEventSelected(block.eventId);
         moved += 1;
       } catch {
         // skip block
@@ -1540,6 +1622,72 @@ export class TimelineChartComponent {
     if (moved === 0) {
       return;
     }
+
+    if (!smoothScroll) {
+      return;
+    }
+
+    const el = this.scrollContainer()?.nativeElement;
+    if (!el) {
+      return;
+    }
+
+    this.cancelScrollAnimation();
+    this.stopContinuousScroll();
+    const moveDirection: 1 | -1 = deltaMin > 0 ? 1 : -1;
+    const targetTop = this.scrollTopForSelectionScrolloff(
+      el,
+      selectionStartMin,
+      selectionEndMin,
+      moveDirection
+    );
+    this.animateTimelineScrollTo(el, targetTop);
+  }
+
+  private canvasInnerHeightPx(): number {
+    return Math.max(0, this.canvasHeightPx() - LAYOUT_PADDING_Y_PX);
+  }
+
+  private minutesToContentY(minutes: number): number {
+    return LAYOUT_PADDING_TOP_PX + (minutes / MINUTES_PER_DAY) * this.canvasInnerHeightPx();
+  }
+
+  /** Scroll position that keeps SCROLL_OFF_HOURS visible above/below the selection (vim scrolloff). */
+  private scrollTopForSelectionScrolloff(
+    el: HTMLElement,
+    selectionStartMin: number,
+    selectionEndMin: number,
+    moveDirection: 1 | -1
+  ): number {
+    const paddingPx = SCROLL_OFF_HOURS * this.pxPerHour();
+    const viewportH = el.clientHeight;
+    const maxTop = Math.max(0, el.scrollHeight - viewportH);
+    const blockTop = this.minutesToContentY(selectionStartMin);
+    const blockBottom = this.minutesToContentY(selectionEndMin);
+    let scrollTop = el.scrollTop;
+
+    if (blockBottom - blockTop > viewportH - paddingPx * 2) {
+      if (moveDirection > 0) {
+        scrollTop = blockBottom + paddingPx - viewportH;
+      } else {
+        scrollTop = blockTop - paddingPx;
+      }
+      return Math.min(maxTop, Math.max(0, scrollTop));
+    }
+
+    if (moveDirection > 0) {
+      const overflow = blockBottom - (scrollTop + viewportH - paddingPx);
+      if (overflow > 0) {
+        scrollTop = Math.min(maxTop, scrollTop + overflow);
+      }
+    } else {
+      const overflow = scrollTop + paddingPx - blockTop;
+      if (overflow > 0) {
+        scrollTop = Math.max(0, scrollTop - overflow);
+      }
+    }
+
+    return scrollTop;
   }
 
   private moveSelectedBlocksToEdge(edge: 'top' | 'bottom', event: KeyboardEvent): void {
@@ -1561,13 +1709,26 @@ export class TimelineChartComponent {
     const minutesOnView = (iso: string, viewDate: string) =>
       minutesOnViewDate(iso, viewDate, this.timezone());
 
-    for (const block of blocks) {
-      const interval = visibleBlockIntervalMinutes(block, this.date(), minutesOnView);
-      const durationMin = interval.endMin - interval.startMin;
-      const target =
-        edge === 'top'
-          ? clampIntervalToDay(0, durationMin)
-          : clampIntervalToDay(MINUTES_PER_DAY - durationMin, MINUTES_PER_DAY);
+    const viewDate = this.date();
+    const blockIntervals = blocks.map((block) => ({
+      block,
+      interval: visibleBlockIntervalMinutes(block, viewDate, minutesOnView)
+    }));
+    const deltaMin = groupEdgeShiftDeltaMinutes(
+      blockIntervals.map(({ interval }) => interval),
+      edge
+    );
+
+    if (deltaMin === 0) {
+      this.scrollTimelineToEdge(edge);
+      return;
+    }
+
+    for (const { block, interval } of blockIntervals) {
+      const target = clampIntervalToDay(
+        interval.startMin + deltaMin,
+        interval.endMin + deltaMin
+      );
 
       if (target.startMin === interval.startMin && target.endMin === interval.endMin) {
         continue;
@@ -1576,19 +1737,20 @@ export class TimelineChartComponent {
       try {
         const previous = buildEventTimePatch(
           block,
-          this.date(),
+          viewDate,
           interval.startMin,
           interval.endMin,
           minutesOnView
         );
         const next = buildEventTimePatch(
           block,
-          this.date(),
+          viewDate,
           target.startMin,
           target.endMin,
           minutesOnView
         );
         this.eventTimeChange.emit({ label: 'Move block', previous, next });
+        this.keepEventSelected(block.eventId);
       } catch {
         // skip block
       }
@@ -1621,6 +1783,45 @@ export class TimelineChartComponent {
   private isJKKey(key: string): boolean {
     const normalized = key.toLowerCase();
     return normalized === 'j' || normalized === 'k';
+  }
+
+  private isMotionCountDigit(key: string): boolean {
+    return /^[0-9]$/.test(key);
+  }
+
+  private clearPendingMotionCount(): void {
+    this.pendingMotionCount = '';
+  }
+
+  private handleMotionCountKey(event: KeyboardEvent): boolean {
+    if (!this.isMotionCountDigit(event.key) || event.repeat) {
+      return false;
+    }
+    if (event.ctrlKey || event.metaKey || event.altKey) {
+      return false;
+    }
+    if (this.blocksKeyboardBlocked()) {
+      return false;
+    }
+    if (event.key === '0' && this.pendingMotionCount === '') {
+      return false;
+    }
+
+    event.preventDefault();
+    const next = `${this.pendingMotionCount}${event.key}`;
+    const parsed = Number.parseInt(next, 10);
+    if (Number.isFinite(parsed) && parsed > 0 && parsed <= HOURS_PER_DAY) {
+      this.pendingMotionCount = next;
+    }
+    return true;
+  }
+
+  private consumeMotionCount(): { hours: number; prefixed: boolean } {
+    const hadPending = this.pendingMotionCount.length > 0;
+    const parsed = Number.parseInt(this.pendingMotionCount, 10);
+    this.pendingMotionCount = '';
+    const hours = Number.isFinite(parsed) && parsed > 0 ? parsed : 1;
+    return { hours, prefixed: hadPending && Number.isFinite(parsed) && parsed > 0 };
   }
 
   private hasNudgeableSelection(): boolean {
@@ -1681,18 +1882,29 @@ export class TimelineChartComponent {
     }
 
     this.pendingReselectTargetDate.set(targetDate);
-    this.selectedEventIds.set(
-      new Set(
-        changes.map((change) => change.next.eventId).filter((id): id is string => Boolean(id))
-      )
-    );
-    this.selectDate.emit(targetDate);
+    const movedIds = changes
+      .map((change) => change.next.eventId)
+      .filter((id): id is string => Boolean(id));
+    const eventIds = new Set(movedIds);
+    this.selectedEventIds.set(eventIds);
+    this.refreshSelectionKeysFromEventIds(eventIds);
+    this.emitSelectionChange();
     this.blocksDayShift.emit({ changes, targetDate, sourceDate: viewDate });
   }
 
   private applyPreservedSelection(preserved: readonly string[]): void {
     const eventIds = new Set(preserved);
     const current = this.selectedEventIds();
+
+    // Parent preserved ids can lag behind a shift-click; don't drop newer local picks.
+    if (
+      current.size > eventIds.size &&
+      [...eventIds].every((id) => current.has(id))
+    ) {
+      this.refreshSelectionKeysFromEventIds(current);
+      return;
+    }
+
     if (current.size !== eventIds.size || [...current].some((id) => !eventIds.has(id))) {
       this.selectedEventIds.set(eventIds);
     }
@@ -1791,7 +2003,12 @@ export class TimelineChartComponent {
     this.animateTimelineScrollTo(el, edge === 'top' ? 0 : maxTop);
   }
 
-  private scrollTimeline(direction: 1 | -1, event: KeyboardEvent): void {
+  private scrollTimeline(
+    direction: 1 | -1,
+    event: KeyboardEvent,
+    hours = 1,
+    immediate = false
+  ): void {
     if (this.blocksKeyboardBlocked()) {
       return;
     }
@@ -1803,6 +2020,19 @@ export class TimelineChartComponent {
 
     event.preventDefault();
 
+    if (immediate) {
+      this.pendingScrollKey = null;
+      this.cancelScrollAnimation();
+      this.stopContinuousScroll();
+      if (this.scrollHoldArmTimer !== null) {
+        clearTimeout(this.scrollHoldArmTimer);
+        this.scrollHoldArmTimer = null;
+      }
+      document.removeEventListener('keyup', this.boundScrollKeyUp);
+      this.animateTimelineScroll(el, direction * this.pxPerHour() * hours);
+      return;
+    }
+
     if (event.repeat) {
       this.cancelScrollAnimation();
       this.startScrollHold(direction, el);
@@ -1811,7 +2041,7 @@ export class TimelineChartComponent {
 
     this.cancelScrollAnimation();
     this.stopContinuousScroll();
-    this.pendingScrollKey = { direction, el, holdStarted: false };
+    this.pendingScrollKey = { direction, el, holdStarted: false, hours };
     this.scrollHoldContainer = el;
     document.addEventListener('keyup', this.boundScrollKeyUp);
 
@@ -1900,7 +2130,6 @@ export class TimelineChartComponent {
 
   private animateTimelineScrollTo(el: HTMLElement, targetTop: number): void {
     this.cancelScrollAnimation();
-    this.pendingScrollKey = null;
     this.stopContinuousScroll();
 
     const startTop = el.scrollTop;
@@ -2009,17 +2238,21 @@ export class TimelineChartComponent {
       }
     }
     for (const key of keys) {
-      const id = key.split('|')[0];
-      if (id) {
-        eventIds.add(id);
+      if (key.includes('|')) {
+        continue;
       }
+      eventIds.add(key);
     }
     this.selectedEventIds.set(eventIds);
     this.emitSelectionChange();
   }
 
   private emitSelectionChange(): void {
-    this.blocksSelectionChange.emit(this.getSelectedBlocks());
+    const blocks = this.getSelectedBlocks();
+    if (blocks.length === 0 && this.selectedEventIds().size > 0) {
+      return;
+    }
+    this.blocksSelectionChange.emit(blocks);
   }
 
   private getSelectedBlocks(): TimelineBlock[] {
