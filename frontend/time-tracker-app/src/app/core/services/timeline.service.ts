@@ -8,6 +8,7 @@ import { MonthSummaryResponse, TimelineResponse } from '../models/timeline.model
 export interface EventPatchPayload {
   timestamp: string;
   durationSec: number;
+  title?: string;
   metadata?: { localDate: string; endLocalDate?: string };
 }
 

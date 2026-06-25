@@ -183,3 +183,31 @@ export function applyEventTimeChangeToTimeline(
   updated = addBlockToTimeline(updated, blockFromTimePatch(original, change.next));
   return updated;
 }
+
+/** Rename one event's activity label in a cached day timeline. */
+export function applyEventRenameToTimeline(
+  timeline: TimelineResponse,
+  change: { next: { eventId: string; title: string; metadata?: { category?: string; confidence?: number } } }
+): TimelineResponse {
+  const hours = timeline.hours.map((hour) => ({
+    ...hour,
+    blocks: hour.blocks.map((block) => {
+      if (block.eventId !== change.next.eventId) {
+        return block;
+      }
+
+      const category = change.next.metadata?.category as ActivityCategory | undefined;
+      return {
+        ...block,
+        activity: change.next.title,
+        ...(category
+          ? {
+              category,
+              confidence: change.next.metadata?.confidence ?? block.confidence
+            }
+          : {})
+      };
+    })
+  }));
+  return { ...timeline, hours };
+}

@@ -287,6 +287,44 @@ describe('activity routes (API contract)', () => {
     assert.equal(block.durationSec, 1800);
   });
 
+  it('PATCH /api/events/:eventId updates event title', async () => {
+    const ingest = await request('/api/events', {
+      method: 'POST',
+      headers: bearer(token),
+      body: {
+        timestamp: `${DATE}T11:00:00.000Z`,
+        type: 'manual',
+        title: 'Old label',
+        durationSec: 3600,
+        metadata: { localDate: DATE },
+      },
+    });
+    assert.equal(ingest.status, 201);
+    const eventId = ingest.body.ids[0];
+
+    const patch = await request(`/api/events/${eventId}?timezone=UTC`, {
+      method: 'PATCH',
+      headers: bearer(token),
+      body: {
+        timestamp: `${DATE}T11:00:00.000Z`,
+        durationSec: 3600,
+        title: 'debugging the backend api',
+        metadata: { localDate: DATE },
+      },
+    });
+    assert.equal(patch.status, 200);
+    assert.equal(patch.body.event.title, 'debugging the backend api');
+    assert.equal(patch.body.event.metadata.category, 'work');
+
+    const after = await request(`/api/timeline?date=${DATE}&timezone=UTC`, {
+      headers: bearer(token),
+    });
+    const block = after.body.hours[11].blocks.find((b) => b.eventId === eventId);
+    assert.ok(block);
+    assert.equal(block.activity, 'debugging the backend api');
+    assert.equal(block.category, 'work');
+  });
+
   it('PATCH /api/events/:eventId keeps other events on the same day', async () => {
     const first = await request('/api/events', {
       method: 'POST',

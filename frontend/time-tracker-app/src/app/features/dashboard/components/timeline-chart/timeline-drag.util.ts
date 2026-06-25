@@ -23,6 +23,25 @@ export interface EventTimeChangePayload {
   next: EventTimePatch;
 }
 
+export interface EventRenamePatch {
+  eventId: string;
+  title: string;
+  timestamp: string;
+  durationSec: number;
+  metadata: {
+    localDate: string;
+    endLocalDate?: string;
+    category?: string;
+    confidence?: number;
+  };
+}
+
+export interface ActivityRenamePayload {
+  label: string;
+  previous: EventRenamePatch;
+  next: EventRenamePatch;
+}
+
 export interface BlocksDayShiftPayload {
   changes: EventTimeChangePayload[];
   targetDate: string;
@@ -191,6 +210,35 @@ export function buildRestorePayloadFromBlock(
       category: block.category,
       localDate: viewDate,
       sourceClient: 'dashboard-undo'
+    }
+  };
+}
+
+export function buildEventRenamePatch(
+  block: TimelineBlock,
+  viewDate: string,
+  title: string
+): EventRenamePatch {
+  if (!block.eventId) {
+    throw new Error('Block has no eventId');
+  }
+
+  const startIso = block.eventStart ?? block.start;
+  const durationSec =
+    block.eventStart && block.eventEnd
+      ? Math.max(0, Math.round((Date.parse(block.eventEnd) - Date.parse(block.eventStart)) / 1000))
+      : block.durationSec;
+
+  return {
+    eventId: block.eventId,
+    title: title.trim() || block.activity,
+    timestamp: startIso,
+    durationSec,
+    metadata: {
+      localDate: viewDate,
+      category: block.category,
+      ...(block.confidence !== undefined ? { confidence: block.confidence } : {}),
+      ...(block.spansNextDay ? { endLocalDate: shiftViewDate(viewDate, 1) } : {})
     }
   };
 }

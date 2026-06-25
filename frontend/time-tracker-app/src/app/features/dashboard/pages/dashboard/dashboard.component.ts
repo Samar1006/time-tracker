@@ -21,9 +21,11 @@ import { VoiceLogService } from '../../../../core/services/voice-log.service';
 import { AppShellComponent } from '../../../../shared/layouts/app-shell/app-shell.component';
 import { TimelineChartComponent } from '../../components/timeline-chart/timeline-chart.component';
 import {
+  ActivityRenamePayload,
   BlockDeletePayload,
   BlocksDayShiftPayload,
   EventCreateDraft,
+  EventRenamePatch,
   EventTimeChangePayload,
   EventTimePatch
 } from '../../components/timeline-chart/timeline-drag.util';
@@ -36,6 +38,7 @@ import {
 import {
   applyDayShiftToTimelineCache,
   applyEventCreateToTimeline,
+  applyEventRenameToTimeline,
   applyEventTimeChangeToTimeline,
   emptyTimelineForDate,
   removeEventFromTimeline
@@ -242,6 +245,67 @@ export class DashboardComponent {
           }
           this.softRefresh.set(false);
           this.patchError.set('Could not save timeline change. Your edit was reverted.');
+        }
+      });
+  }
+
+  onActivityRename(change: ActivityRenamePayload): void {
+    const viewDate = this.selectedDate();
+    this.patchError.set(null);
+    this.softRefresh.set(true);
+    this.preservedSelectionIds.set([]);
+
+    this.timelineService
+      .categorizeActivity(change.next.title)
+      .pipe(
+        catchError(() =>
+          of({ category: 'uncategorized', confidence: 0, method: 'none' })
+        ),
+        switchMap(({ category, confidence }) => {
+          const classified: ActivityRenamePayload = {
+            ...change,
+            next: {
+              ...change.next,
+              metadata: {
+                ...change.next.metadata,
+                category,
+                confidence
+              }
+            }
+          };
+
+          const timeline = this.displayTimeline();
+          if (timeline) {
+            this.setTimelineCache(viewDate, applyEventRenameToTimeline(timeline, classified));
+          }
+
+          return this.timelineService
+            .updateEvent(classified.next.eventId, {
+              timestamp: classified.next.timestamp,
+              durationSec: classified.next.durationSec,
+              title: classified.next.title,
+              metadata: classified.next.metadata
+            })
+            .pipe(map(() => classified));
+        })
+      )
+      .subscribe({
+        next: (classified) => {
+          this.softRefresh.set(false);
+          this.undoService.record({
+            label: change.label,
+            viewDate,
+            undo: () => this.applyEventRenamePatch(classified.previous),
+            redo: () => this.applyEventRenamePatch(classified.next)
+          });
+        },
+        error: () => {
+          const current = this.displayTimeline();
+          if (current) {
+            this.setTimelineCache(viewDate, applyEventRenameToTimeline(current, { next: change.previous }));
+          }
+          this.softRefresh.set(false);
+          this.patchError.set('Could not rename activity. Your edit was reverted.');
         }
       });
   }
@@ -557,6 +621,17 @@ export class DashboardComponent {
       this.timelineService.updateEvent(patch.eventId, {
         timestamp: patch.timestamp,
         durationSec: patch.durationSec,
+        metadata: patch.metadata
+      })
+    ).then(() => undefined);
+  }
+
+  private applyEventRenamePatch(patch: EventRenamePatch): Promise<void> {
+    return firstValueFrom(
+      this.timelineService.updateEvent(patch.eventId, {
+        timestamp: patch.timestamp,
+        durationSec: patch.durationSec,
+        title: patch.title,
         metadata: patch.metadata
       })
     ).then(() => undefined);

@@ -246,6 +246,7 @@ curl -s -X POST http://localhost:4000/api/events \
 {
   "timestamp": "2026-06-20T14:00:00.000Z",
   "durationSec": 3600,
+  "title": "Deep work",
   "metadata": { "localDate": "2026-06-20" }
 }
 ```
@@ -254,6 +255,7 @@ curl -s -X POST http://localhost:4000/api/events \
 |-------|----------|-------|
 | `timestamp` | **Yes** | ISO 8601 UTC — new interval start |
 | `durationSec` | **Yes** | Minimum 300 (5 minutes) |
+| `title` | No | New activity label; re-classifies manual/voice events when provided |
 | `metadata` | No | Merged with existing metadata; `localDate` helps locate the event |
 
 **Success:** `200` — `{ "event": { "id", "timestamp", "durationSec", "metadata", ... } }`

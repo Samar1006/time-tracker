@@ -284,13 +284,16 @@ router.patch('/events/:eventId', requireAuth, async (req, res, next) => {
   try {
     const { eventId } = req.params;
     const userId = req.user.id;
-    const { timestamp, durationSec, metadata } = req.body ?? {};
+    const { timestamp, durationSec, metadata, title } = req.body ?? {};
 
     if (!timestamp || !Number.isFinite(Date.parse(timestamp))) {
       return res.status(400).json({ error: 'Provide a valid timestamp (ISO 8601).' });
     }
     if (durationSec == null || !Number.isFinite(Number(durationSec)) || Number(durationSec) < MIN_PATCH_DURATION_SEC) {
       return res.status(400).json({ error: `durationSec must be at least ${MIN_PATCH_DURATION_SEC}.` });
+    }
+    if (title !== undefined && typeof title !== 'string') {
+      return res.status(400).json({ error: 'title must be a string.' });
     }
 
     const dateHint = parseDateOnly(metadata?.localDate) ?? parseDateOnly(timestamp);
@@ -311,6 +314,7 @@ router.patch('/events/:eventId', requireAuth, async (req, res, next) => {
         ...located.event,
         timestamp: new Date(Date.parse(timestamp)).toISOString(),
         durationSec: Math.round(Number(durationSec)),
+        ...(title !== undefined ? { title: String(title).trim() || located.event.title } : {}),
         metadata: metadata && typeof metadata === 'object'
           ? { ...(located.event.metadata ?? {}), ...metadata }
           : located.event.metadata,
@@ -318,7 +322,9 @@ router.patch('/events/:eventId', requireAuth, async (req, res, next) => {
       timezone,
     );
 
-    const saved = await replaceEvent(userId, located.storageDate, eventId, updated);
+    const toSave = title !== undefined ? classifyStoredEvent(updated) : updated;
+
+    const saved = await replaceEvent(userId, located.storageDate, eventId, toSave);
     if (!saved) {
       return res.status(404).json({ error: 'Event not found.' });
     }
