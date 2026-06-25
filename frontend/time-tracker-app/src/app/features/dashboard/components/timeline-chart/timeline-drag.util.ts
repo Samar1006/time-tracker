@@ -4,6 +4,7 @@ import { localTimestamp } from '../../../../core/utils/voice-block.util';
 
 export const SNAP_MINUTES = 5;
 export const MIN_DURATION_MINUTES = 5;
+export const DEFAULT_CREATE_DURATION_MINUTES = 60;
 export const MINUTES_PER_DAY = 24 * 60;
 export const RESIZE_HANDLE_PX = 8;
 
@@ -92,6 +93,17 @@ export function deltaPxToMinutes(deltaPx: number, canvasHeightPx: number): numbe
 export function offsetYToMinutes(offsetY: number, canvasHeightPx: number): number {
   if (canvasHeightPx <= 0) return 0;
   return snapMinutes((offsetY / canvasHeightPx) * MINUTES_PER_DAY);
+}
+
+/** Click-to-create on empty canvas: one hour starting at the snapped click time. */
+export function defaultCreateInterval(anchorMin: number): { startMin: number; endMin: number } {
+  let startMin = snapMinutes(anchorMin);
+  let endMin = startMin + DEFAULT_CREATE_DURATION_MINUTES;
+  if (endMin > MINUTES_PER_DAY) {
+    endMin = MINUTES_PER_DAY;
+    startMin = Math.max(0, endMin - DEFAULT_CREATE_DURATION_MINUTES);
+  }
+  return { startMin, endMin };
 }
 
 /** Drag-to-create: anchor + current pointer define the interval (either direction). */

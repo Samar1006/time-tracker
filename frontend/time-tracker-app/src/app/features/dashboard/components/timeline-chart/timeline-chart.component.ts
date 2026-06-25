@@ -5,6 +5,7 @@ import {
   effect,
   ElementRef,
   afterEveryRender,
+  afterNextRender,
   HostListener,
   inject,
   input,
@@ -37,6 +38,7 @@ import {
   shiftViewDate,
   visibleBlockIntervalMinutes,
   clampCreateDragInterval,
+  defaultCreateInterval,
   clampIntervalToDay,
   deltaPxToMinutes,
   offsetYToMinutes
@@ -81,8 +83,11 @@ const HOURS_PER_DAY = 24;
 const BASE_PX_PER_HOUR = 56;
 const MINUTES_PER_DAY = HOURS_PER_DAY * MINUTES_PER_HOUR;
 const HALF_HOUR_STEP_PCT = (0.5 / HOURS_PER_DAY) * 100;
-const MIN_ZOOM = 1;
-const MAX_ZOOM = 6;
+const DEFAULT_ZOOM = 1;
+const MAX_ZOOM = 12;
+/** Matches .day-calendar__layout vertical padding (0.5rem + 0.75rem at 16px root). */
+const LAYOUT_PADDING_Y_PX = 20;
+const BASE_DAY_HEIGHT_PX = HOURS_PER_DAY * BASE_PX_PER_HOUR;
 /** Trackpad pinch fires wheel+ctrlKey; tuned for gesture deltas, not mouse wheel. */
 const PINCH_ZOOM_SENSITIVITY = 0.005;
 const DRAG_THRESHOLD_PX = 5;
@@ -149,6 +154,51 @@ function blockFullDurationSec(block: TimelineBlock): number {
   return block.durationSec;
 }
 
+/** Rejoin hour-bucket slices for the same stored event (even when other blocks sit between them). */
+function mergeEventSlices(blocks: TimelineBlock[]): TimelineBlock[] {
+  const withoutId: TimelineBlock[] = [];
+  const byEventId = new Map<string, TimelineBlock[]>();
+
+  for (const block of blocks) {
+    const id = block.eventId;
+    if (!id) {
+      withoutId.push(block);
+      continue;
+    }
+    const group = byEventId.get(id) ?? [];
+    group.push(block);
+    byEventId.set(id, group);
+  }
+
+  const merged: TimelineBlock[] = [...withoutId];
+
+  for (const slices of byEventId.values()) {
+    if (slices.length === 1) {
+      merged.push(slices[0]);
+      continue;
+    }
+
+    const sorted = [...slices].sort((a, b) => a.start.localeCompare(b.start));
+    const first = sorted[0];
+    const last = sorted[sorted.length - 1];
+    const start = sorted.reduce((min, b) => (b.start < min ? b.start : min), sorted[0].start);
+    const end = sorted.reduce((max, b) => (b.end > max ? b.end : max), sorted[0].end);
+
+    merged.push({
+      ...first,
+      start,
+      end,
+      eventStart: first.eventStart ?? start,
+      eventEnd: last.eventEnd ?? end,
+      durationSec: sorted.reduce((sum, b) => sum + b.durationSec, 0),
+      spansNextDay: sorted.some((b) => b.spansNextDay),
+      spansFromPrevDay: sorted.some((b) => b.spansFromPrevDay)
+    });
+  }
+
+  return merged;
+}
+
 /** Rejoin hour-bucket slices that the server split across consecutive hours. */
 function mergeContiguousBlocks(blocks: TimelineBlock[]): TimelineBlock[] {
   const sorted = [...blocks].sort((a, b) => a.start.localeCompare(b.start));
@@ -170,10 +220,164 @@ function mergeContiguousBlocks(blocks: TimelineBlock[]): TimelineBlock[] {
   return merged;
 }
 
+/** One layout row per stored event (guards duplicate hour-bucket slices). */
+function dedupeBlocksByEventId(blocks: TimelineBlock[]): TimelineBlock[] {
+  const withoutId: TimelineBlock[] = [];
+  const byId = new Map<string, TimelineBlock>();
+
+  for (const block of blocks) {
+    const id = block.eventId;
+    if (!id) {
+      withoutId.push(block);
+      continue;
+    }
+
+    const existing = byId.get(id);
+    if (!existing) {
+      byId.set(id, block);
+      continue;
+    }
+
+    const existingStart = Date.parse(existing.start);
+    const blockStart = Date.parse(block.start);
+    const existingEnd = Date.parse(existing.end);
+    const blockEnd = Date.parse(block.end);
+    if (blockStart <= existingStart && blockEnd >= existingEnd) {
+      byId.set(id, block);
+    }
+  }
+
+  return [...withoutId, ...byId.values()];
+}
+
+interface LayoutItem {
+  block: TimelineBlock;
+  startMin: number;
+  endMin: number;
+  topPct: number;
+  heightPct: number;
+  column: number;
+  columnCount: number;
+}
+
+/** One positioned row per event before columns are assigned. */
+function dedupeLayoutItemsByEventId(items: LayoutItem[]): LayoutItem[] {
+  const withoutId: LayoutItem[] = [];
+  const byId = new Map<string, LayoutItem>();
+
+  for (const item of items) {
+    const id = item.block.eventId;
+    if (!id) {
+      withoutId.push(item);
+      continue;
+    }
+
+    const existing = byId.get(id);
+    if (!existing) {
+      byId.set(id, item);
+      continue;
+    }
+
+    const span = item.endMin - item.startMin;
+    const existingSpan = existing.endMin - existing.startMin;
+    if (span > existingSpan) {
+      byId.set(id, item);
+    }
+  }
+
+  return [...withoutId, ...byId.values()];
+}
+
+function uniqueOverlapCluster(cluster: LayoutItem[]): LayoutItem[] {
+  const withoutId: LayoutItem[] = [];
+  const byId = new Map<string, LayoutItem>();
+
+  for (const item of cluster) {
+    const id = item.block.eventId;
+    if (!id) {
+      withoutId.push(item);
+      continue;
+    }
+    if (!byId.has(id)) {
+      byId.set(id, item);
+    }
+  }
+
+  return [...withoutId, ...byId.values()];
+}
+
+interface LayoutInterval {
+  startMin: number;
+  endMin: number;
+}
+
+/** Clip the visible day slice (matches visibleBlockIntervalMinutes in timeline-drag.util). */
+function layoutIntervalMinutes(
+  block: TimelineBlock,
+  viewDate: string,
+  timeZone: string,
+  rangeStartMin: number,
+  rangeSpanMin: number
+): LayoutInterval | null {
+  const startMin = minutesOnViewDate(block.start, viewDate, timeZone);
+  let endMin = minutesOnViewDate(block.end, viewDate, timeZone);
+  if (endMin <= startMin && block.durationSec > 0) {
+    endMin = startMin + block.durationSec / 60;
+  }
+  const clipStart = Math.max(startMin, rangeStartMin);
+  const clipEnd = Math.min(endMin, rangeStartMin + rangeSpanMin);
+  if (clipEnd <= clipStart) {
+    return null;
+  }
+  return { startMin: clipStart, endMin: clipEnd };
+}
+
 /**
  * Overlapping events share horizontal space side-by-side (Apple Calendar day view).
- * Each event gets a column index; width = 1 / max concurrent columns in its cluster.
+ * Each event keeps its full height; only the column index changes when times overlap.
  */
+function intervalsOverlap(
+  a: { startMin: number; endMin: number },
+  b: { startMin: number; endMin: number }
+): boolean {
+  return a.startMin < b.endMin - 0.01 && a.endMin > b.startMin + 0.01;
+}
+
+function overlapCluster<T extends LayoutInterval>(item: T, items: readonly T[]): T[] {
+  const cluster: T[] = [];
+  const stack = [item];
+  const seen = new Set<T>();
+
+  while (stack.length) {
+    const current = stack.pop()!;
+    if (seen.has(current)) {
+      continue;
+    }
+    seen.add(current);
+    cluster.push(current);
+    for (const other of items) {
+      if (!seen.has(other) && intervalsOverlap(current, other)) {
+        stack.push(other);
+      }
+    }
+  }
+
+  return cluster;
+}
+
+/** Older events claim left columns; matches server ids `evt_<createdAt>_…`. */
+function blockColumnPriority(block: TimelineBlock): number {
+  const id = block.eventId ?? '';
+  const idMatch = /^evt_(\d+)_/.exec(id);
+  if (idMatch) {
+    return Number.parseInt(idMatch[1], 10);
+  }
+
+  const iso = block.eventStart ?? block.start;
+  const ms = Date.parse(iso);
+  return Number.isFinite(ms) ? ms : 0;
+}
+
 function layoutVerticalBlocks(
   blocks: TimelineBlock[],
   viewDate: string,
@@ -185,33 +389,35 @@ function layoutVerticalBlocks(
     return [];
   }
 
-  const items = blocks
-    .map((block) => {
-      // Slice start/end match the portion of this event on the viewed calendar day.
-      const startMin = minutesOnViewDate(block.start, viewDate, timeZone);
-      let endMin = minutesOnViewDate(block.end, viewDate, timeZone);
-      if (endMin <= startMin && block.durationSec > 0) {
-        endMin = startMin + block.durationSec / 60;
-      }
-      const clipStart = Math.max(startMin, rangeStartMin);
-      const clipEnd = Math.min(endMin, rangeStartMin + rangeSpanMin);
-      if (clipEnd <= clipStart) {
-        return null;
-      }
-      const spanMin = clipEnd - clipStart;
-      return {
-        block,
-        startMin: clipStart,
-        endMin: clipEnd,
-        topPct: ((clipStart - rangeStartMin) / rangeSpanMin) * 100,
-        heightPct: (spanMin / rangeSpanMin) * 100,
-        column: 0,
-        columnCount: 1
-      };
-    })
-    .filter((item): item is NonNullable<typeof item> => item !== null);
+  const items = dedupeLayoutItemsByEventId(
+    blocks
+      .map((block) => {
+        const interval = layoutIntervalMinutes(block, viewDate, timeZone, rangeStartMin, rangeSpanMin);
+        if (!interval) {
+          return null;
+        }
+        const { startMin, endMin } = interval;
+        return {
+          block,
+          startMin,
+          endMin,
+          topPct: ((startMin - rangeStartMin) / rangeSpanMin) * 100,
+          heightPct: ((endMin - startMin) / rangeSpanMin) * 100,
+          column: 0,
+          columnCount: 1
+        };
+      })
+      .filter((item): item is LayoutItem => item !== null)
+  );
 
-  items.sort((a, b) => a.startMin - b.startMin || a.endMin - b.endMin);
+  // Older events claim left columns; each block stays one continuous bar.
+  items.sort((a, b) => {
+    const byCreated = blockColumnPriority(a.block) - blockColumnPriority(b.block);
+    if (byCreated !== 0) {
+      return byCreated;
+    }
+    return a.startMin - b.startMin || a.endMin - b.endMin;
+  });
 
   const columnEnds: number[] = [];
   for (const item of items) {
@@ -227,12 +433,13 @@ function layoutVerticalBlocks(
   }
 
   for (const item of items) {
-    let maxColumn = item.column;
-    for (const other of items) {
-      if (other.startMin < item.endMin - 0.01 && other.endMin > item.startMin + 0.01) {
-        maxColumn = Math.max(maxColumn, other.column);
-      }
+    const cluster = uniqueOverlapCluster(overlapCluster(item, items));
+    if (cluster.length === 1) {
+      item.column = 0;
+      item.columnCount = 1;
+      continue;
     }
+    const maxColumn = Math.max(...cluster.map((member) => member.column));
     item.columnCount = maxColumn + 1;
   }
 
@@ -270,6 +477,7 @@ interface CreatePreview {
 
 interface ActiveCreateDrag {
   anchorStartMin: number;
+  anchorClientY: number;
 }
 
 interface PendingBlockInteraction {
@@ -312,7 +520,8 @@ export class TimelineChartComponent {
   private createBusyWasTrue = false;
   private labelBlurReady = false;
   private createLabelFocusKey = 0;
-  private pinchStartScale = MIN_ZOOM;
+  private scrollResizeObserver: ResizeObserver | null = null;
+  private pinchStartScale = DEFAULT_ZOOM;
   private pointerAnchorY = 0;
   private savedScrollTop = 0;
   private stableDate = '';
@@ -321,7 +530,8 @@ export class TimelineChartComponent {
   private pendingDate = '';
   private readonly pendingReselectTargetDate = signal<string | null>(null);
 
-  readonly zoomScale = signal(MIN_ZOOM);
+  readonly zoomScale = signal(DEFAULT_ZOOM);
+  private readonly scrollViewportHeight = signal(0);
   readonly tooltip = signal<TooltipState | null>(null);
   readonly contextMenu = signal<ContextMenuState | null>(null);
   readonly activeDrag = signal<ActiveDrag | null>(null);
@@ -397,7 +607,9 @@ export class TimelineChartComponent {
   readonly halfHourStepPct = HALF_HOUR_STEP_PCT;
 
   readonly positionedBlocks = computed((): PositionedBlock[] => {
-    const allBlocks = mergeContiguousBlocks(this.hours().flatMap((h) => h.blocks));
+    const allBlocks = dedupeBlocksByEventId(
+      mergeContiguousBlocks(mergeEventSlices(this.hours().flatMap((h) => h.blocks)))
+    );
 
     return layoutVerticalBlocks(
       allBlocks,
@@ -516,6 +728,23 @@ export class TimelineChartComponent {
       this.pendingScrollKey = null;
       this.stopContinuousScroll();
       this.cancelScrollAnimation();
+      this.scrollResizeObserver?.disconnect();
+    });
+
+    afterNextRender(() => {
+      const el = this.scrollContainer()?.nativeElement;
+      if (!el) {
+        return;
+      }
+
+      const syncViewport = () => {
+        this.scrollViewportHeight.set(el.clientHeight);
+        this.clampZoomToViewport();
+      };
+
+      syncViewport();
+      this.scrollResizeObserver = new ResizeObserver(syncViewport);
+      this.scrollResizeObserver.observe(el);
     });
 
     afterEveryRender(() => {
@@ -717,7 +946,15 @@ export class TimelineChartComponent {
 
   isDraggingBlock(positioned: PositionedBlock): boolean {
     const drag = this.activeDrag();
-    return drag ? this.blockTrackKey(drag.positioned) === this.blockTrackKey(positioned) : false;
+    if (!drag) {
+      return false;
+    }
+    const a = drag.positioned.block;
+    const b = positioned.block;
+    if (a.eventId && b.eventId) {
+      return a.eventId === b.eventId;
+    }
+    return a.start === b.start && a.end === b.end && a.activity === b.activity;
   }
 
   onResizeHandleDown(event: PointerEvent, positioned: PositionedBlock, mode: DragMode): void {
@@ -781,8 +1018,8 @@ export class TimelineChartComponent {
     const anchorStartMin = this.clientYToMinutes(event.clientY, canvas);
 
     this.hideTooltip();
-    this.activeCreateDrag.set({ anchorStartMin });
-    this.updateCreatePreview(anchorStartMin);
+    this.activeCreateDrag.set({ anchorStartMin, anchorClientY: event.clientY });
+    this.updateCreatePreview(anchorStartMin, event.clientY);
 
     document.addEventListener('pointermove', this.boundCreatePointerMove);
     document.addEventListener('pointerup', this.boundCreatePointerUp);
@@ -936,7 +1173,7 @@ export class TimelineChartComponent {
     if (!this.activeCreateDrag() || !canvas) {
       return;
     }
-    this.updateCreatePreview(this.clientYToMinutes(event.clientY, canvas));
+    this.updateCreatePreview(this.clientYToMinutes(event.clientY, canvas), event.clientY);
   }
 
   private onCreatePointerUp(event: PointerEvent): void {
@@ -989,6 +1226,8 @@ export class TimelineChartComponent {
     const title = this.createLabel().trim() || 'New activity';
 
     try {
+      this.labelingCreate.set(null);
+      this.createLabel.set('');
       this.activityCreate.emit(
         buildCreateEventDraft(this.date(), labeling.startMin, labeling.endMin, title)
       );
@@ -1054,13 +1293,18 @@ export class TimelineChartComponent {
     }
   }
 
-  private updateCreatePreview(currentMin: number): void {
+  private updateCreatePreview(currentMin: number, clientY: number): void {
     const drag = this.activeCreateDrag();
     if (!drag) {
       return;
     }
 
-    const clamped = clampCreateDragInterval(drag.anchorStartMin, currentMin);
+    const dragged =
+      Math.abs(clientY - drag.anchorClientY) > DRAG_THRESHOLD_PX ||
+      Math.abs(currentMin - drag.anchorStartMin) >= SNAP_MINUTES;
+    const clamped = dragged
+      ? clampCreateDragInterval(drag.anchorStartMin, currentMin)
+      : defaultCreateInterval(drag.anchorStartMin);
     this.createPreview.set({
       previewTopPct: (clamped.startMin / MINUTES_PER_DAY) * 100,
       previewHeightPct: ((clamped.endMin - clamped.startMin) / MINUTES_PER_DAY) * 100,
@@ -1739,7 +1983,7 @@ export class TimelineChartComponent {
   }
 
   private applyZoomAtAnchor(targetScale: number, anchorOffsetY: number): void {
-    const clamped = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, targetScale));
+    const clamped = Math.min(MAX_ZOOM, Math.max(this.minZoomScale(), targetScale));
     if (Math.abs(clamped - this.zoomScale()) < 0.001) {
       return;
     }
@@ -1756,6 +2000,35 @@ export class TimelineChartComponent {
     }
 
     el.scrollTop = anchorRatio * this.canvasHeightPx() - anchorOffsetY;
+  }
+
+  /** Most zoomed-out level: full 24h grid fits inside the fixed scroll viewport. */
+  private minZoomScale(): number {
+    const viewport = this.scrollViewportHeight();
+    if (viewport <= 0) {
+      return DEFAULT_ZOOM;
+    }
+
+    const available = Math.max(0, viewport - LAYOUT_PADDING_Y_PX);
+    if (available >= BASE_DAY_HEIGHT_PX) {
+      return DEFAULT_ZOOM;
+    }
+
+    return available / BASE_DAY_HEIGHT_PX;
+  }
+
+  private clampZoomToViewport(): void {
+    const min = this.minZoomScale();
+    const current = this.zoomScale();
+    if (current >= min) {
+      return;
+    }
+
+    this.zoomScale.set(min);
+    const el = this.scrollContainer()?.nativeElement;
+    if (el) {
+      el.scrollTop = 0;
+    }
   }
 }
 

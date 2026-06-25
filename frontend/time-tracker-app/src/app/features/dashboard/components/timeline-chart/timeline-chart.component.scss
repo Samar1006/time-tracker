@@ -27,7 +27,8 @@
 }
 
 .day-calendar__scroll {
-  max-height: min(560px, 70vh);
+  height: min(560px, 70vh);
+  min-height: min(560px, 70vh);
   overflow-y: auto;
   overflow-x: hidden;
   overscroll-behavior: contain;
