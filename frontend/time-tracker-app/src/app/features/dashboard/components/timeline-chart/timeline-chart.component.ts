@@ -11,10 +11,12 @@ import { DayDateNavComponent } from '../../../../shared/components/day-date-nav/
 import {
   DragMode,
   EventCreateDraft,
-  EventTimePatch,
+  EventTimeChangePayload,
+  BlockDeletePayload,
   RESIZE_HANDLE_PX,
   buildCreateEventDraft,
   buildEventTimePatch,
+  buildRestorePayloadFromBlock,
   visibleBlockIntervalMinutes,
   clampCreateDragInterval,
   clampIntervalToDay,
@@ -256,9 +258,9 @@ export class TimelineChartComponent {
   readonly prevDay = output<void>();
   readonly nextDay = output<void>();
   readonly selectDate = output<string>();
-  readonly eventTimeChange = output<EventTimePatch>();
+  readonly eventTimeChange = output<EventTimeChangePayload>();
   readonly activityCreate = output<EventCreateDraft>();
-  readonly blockDelete = output<string>();
+  readonly blockDelete = output<BlockDeletePayload>();
 
   readonly patchError = input<string | null>(null);
   readonly createBusy = input(false);
@@ -530,10 +532,14 @@ export class TimelineChartComponent {
   confirmDeleteBlock(event: MouseEvent): void {
     event.stopPropagation();
     const menu = this.contextMenu();
-    const eventId = menu?.positioned.block.eventId;
+    const block = menu?.positioned.block;
+    const eventId = block?.eventId;
     this.closeContextMenu();
-    if (eventId) {
-      this.blockDelete.emit(eventId);
+    if (eventId && block) {
+      this.blockDelete.emit({
+        eventId,
+        restore: buildRestorePayloadFromBlock(block, this.date())
+      });
     }
   }
 
@@ -648,14 +654,33 @@ export class TimelineChartComponent {
     }
 
     try {
-      const patch = buildEventTimePatch(
+      const minutesOnView = (iso: string, viewDate: string) =>
+        minutesOnViewDate(iso, viewDate, this.timezone());
+      const previous = buildEventTimePatch(
+        drag.positioned.block,
+        this.date(),
+        drag.origStartMin,
+        drag.origEndMin,
+        minutesOnView
+      );
+      const next = buildEventTimePatch(
         drag.positioned.block,
         this.date(),
         preview.startMin,
         preview.endMin,
-        (iso, viewDate) => minutesOnViewDate(iso, viewDate, this.timezone())
+        minutesOnView
       );
-      this.eventTimeChange.emit(patch);
+
+      if (
+        previous.timestamp === next.timestamp &&
+        previous.durationSec === next.durationSec
+      ) {
+        this.cancelDrag();
+        return;
+      }
+
+      const label = drag.mode === 'move' ? 'Move block' : 'Resize block';
+      this.eventTimeChange.emit({ label, previous, next });
     } catch {
       this.cancelDrag();
       return;
