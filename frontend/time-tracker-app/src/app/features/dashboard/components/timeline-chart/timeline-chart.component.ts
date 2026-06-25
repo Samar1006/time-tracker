@@ -380,6 +380,44 @@ function blockColumnPriority(block: TimelineBlock): number {
   return Number.isFinite(ms) ? ms : 0;
 }
 
+function assignColumnsInCluster(cluster: LayoutItem[]): void {
+  if (cluster.length === 0) {
+    return;
+  }
+
+  if (cluster.length === 1) {
+    cluster[0].column = 0;
+    cluster[0].columnCount = 1;
+    return;
+  }
+
+  const sorted = [...cluster].sort((a, b) => {
+    const byCreated = blockColumnPriority(a.block) - blockColumnPriority(b.block);
+    if (byCreated !== 0) {
+      return byCreated;
+    }
+    return a.startMin - b.startMin || a.endMin - b.endMin;
+  });
+
+  const columnEnds: number[] = [];
+  for (const item of sorted) {
+    let column = 0;
+    while (column < columnEnds.length && columnEnds[column] > item.startMin + 0.01) {
+      column += 1;
+    }
+    if (column === columnEnds.length) {
+      columnEnds.push(0);
+    }
+    columnEnds[column] = item.endMin;
+    item.column = column;
+  }
+
+  const columnCount = Math.max(...sorted.map((member) => member.column)) + 1;
+  for (const item of sorted) {
+    item.columnCount = columnCount;
+  }
+}
+
 function layoutVerticalBlocks(
   blocks: TimelineBlock[],
   viewDate: string,
@@ -412,37 +450,17 @@ function layoutVerticalBlocks(
       .filter((item): item is LayoutItem => item !== null)
   );
 
-  // Older events claim left columns; each block stays one continuous bar.
-  items.sort((a, b) => {
-    const byCreated = blockColumnPriority(a.block) - blockColumnPriority(b.block);
-    if (byCreated !== 0) {
-      return byCreated;
-    }
-    return a.startMin - b.startMin || a.endMin - b.endMin;
-  });
-
-  const columnEnds: number[] = [];
+  const assigned = new Set<LayoutItem>();
   for (const item of items) {
-    let column = 0;
-    while (column < columnEnds.length && columnEnds[column] > item.startMin + 0.01) {
-      column += 1;
-    }
-    if (column === columnEnds.length) {
-      columnEnds.push(0);
-    }
-    columnEnds[column] = item.endMin;
-    item.column = column;
-  }
-
-  for (const item of items) {
-    const cluster = uniqueOverlapCluster(overlapCluster(item, items));
-    if (cluster.length === 1) {
-      item.column = 0;
-      item.columnCount = 1;
+    if (assigned.has(item)) {
       continue;
     }
-    const maxColumn = Math.max(...cluster.map((member) => member.column));
-    item.columnCount = maxColumn + 1;
+
+    const cluster = uniqueOverlapCluster(overlapCluster(item, items));
+    for (const member of cluster) {
+      assigned.add(member);
+    }
+    assignColumnsInCluster(cluster);
   }
 
   return items.map((item) => ({
