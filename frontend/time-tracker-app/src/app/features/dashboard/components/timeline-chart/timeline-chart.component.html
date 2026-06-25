@@ -38,6 +38,15 @@
           aria-label="Activity timeline"
           (pointerdown)="onCanvasPointerDown($event)"
         >
+          <div
+            class="day-calendar__insert-cursor"
+            [class.day-calendar__insert-cursor--active]="insertMode()"
+            [style.top.%]="insertCursorTopPct()"
+            [attr.aria-label]="'Cursor at ' + insertCursorLabel()"
+          >
+            <span class="day-calendar__insert-cursor-label">{{ insertCursorLabel() }}</span>
+          </div>
+
           @for (guide of hourGuides(); track guide.hour) {
             <div class="day-calendar__hour-line-wrap" [style.top.%]="guide.topPct">
               <div class="day-calendar__hour-line" aria-hidden="true"></div>

@@ -94,6 +94,15 @@ const LAYOUT_PADDING_BOTTOM_PX = 12;
 const LAYOUT_PADDING_Y_PX = LAYOUT_PADDING_TOP_PX + LAYOUT_PADDING_BOTTOM_PX;
 /** Min hours of timeline kept visible above/below selection when moving with j/k (vim scrolloff). */
 const SCROLL_OFF_HOURS = 2;
+/** Allowed j/k step sizes (minutes); zoom picks the largest tier that still gives ~6 steps across the view. */
+const CURSOR_STEP_TIERS = [60, 30, 15, 5, 1] as const;
+const CURSOR_STEP_VIEWPORT_STEPS = 6;
+/** When zoomed in (1 min is ~10px+), use more viewport steps so j/k can reach 1-min tiers. */
+const CURSOR_STEP_VIEWPORT_STEPS_FINE = 30;
+/** Min on-screen height of a 1-minute step before fine tiers apply. */
+const CURSOR_STEP_MIN_PX = 10;
+/** Viewport fraction kept between cursor and top/bottom edge before scrolling follows. */
+const CURSOR_SCROLL_MARGIN_FRACTION = 0.18;
 const BASE_DAY_HEIGHT_PX = HOURS_PER_DAY * BASE_PX_PER_HOUR;
 /** Trackpad pinch fires wheel+ctrlKey; tuned for gesture deltas, not mouse wheel. */
 const PINCH_ZOOM_SENSITIVITY = 0.005;
@@ -104,6 +113,8 @@ const SCROLL_HOLD_PX_PER_SEC = 560;
 const SCROLL_HOLD_ARM_MS = 80;
 /** Window for the second `g` in `gg` (scroll to top). */
 const GG_SEQUENCE_MS = 400;
+/** Faster scroll-follow for cursor moves. */
+const CURSOR_SCROLL_ANIMATION_MS = 40;
 
 function localDayKey(iso: string, timeZone: string): string {
   return new Intl.DateTimeFormat('en-CA', {
@@ -568,6 +579,13 @@ export class TimelineChartComponent {
   readonly createPreview = signal<CreatePreview | null>(null);
   readonly labelingCreate = signal<CreatePreview | null>(null);
   readonly createLabel = signal('');
+  readonly insertMode = signal(false);
+  readonly insertCursorMin = signal(0);
+  readonly insertCursorTopPct = computed(
+    () => (this.insertCursorMin() / MINUTES_PER_DAY) * 100
+  );
+  readonly insertCursorLabel = computed(() => this.formatCursorTime(this.insertCursorMin()));
+  private cursorInitialized = false;
   readonly selectedBlockKeys = signal<Set<string>>(new Set());
   /** Stable across layout/date changes; used to keep selection after h/l day moves. */
   readonly selectedEventIds = signal<Set<string>>(new Set());
@@ -605,6 +623,7 @@ export class TimelineChartComponent {
     hours: number;
   } | null = null;
   private pendingFirstGTimer: ReturnType<typeof setTimeout> | null = null;
+  private pendingFirstZTimer: ReturnType<typeof setTimeout> | null = null;
   private pendingMotionCount = '';
   private readonly boundScrollKeyUp = (event: KeyboardEvent) => {
     const key = event.key.toLowerCase();
@@ -756,6 +775,7 @@ export class TimelineChartComponent {
     this.destroyRef.onDestroy(() => {
       this.teardownPendingBlockListeners();
       this.cancelPendingFirstG();
+      this.cancelPendingFirstZ();
       this.clearPendingMotionCount();
       this.pendingScrollKey = null;
       this.stopContinuousScroll();
@@ -782,6 +802,16 @@ export class TimelineChartComponent {
       const onScroll = () => this.saveScrollViewport(el);
       el.addEventListener('scroll', onScroll, { passive: true });
       this.destroyRef.onDestroy(() => el.removeEventListener('scroll', onScroll));
+
+      if (!this.cursorInitialized) {
+        // First paint: set cursor to current time and scroll it into view.
+        try {
+          this.setCursorToNowAndScroll(el);
+          this.cursorInitialized = true;
+        } catch {
+          // required inputs may not be ready yet; the cursor will initialize on a later render/scroll
+        }
+      }
     });
 
     afterEveryRender(() => {
@@ -833,6 +863,15 @@ export class TimelineChartComponent {
 
   formatBlockDuration(seconds: number): string {
     return formatDuration(seconds);
+  }
+
+  formatCursorTime(minutes: number): string {
+    const fmt = new Intl.DateTimeFormat(undefined, {
+      hour: 'numeric',
+      minute: '2-digit',
+      timeZone: this.timezone()
+    });
+    return fmt.format(new Date(localTimestampFromMinutes(this.date(), minutes)));
   }
 
   formatTimeRange(block: TimelineBlock): string {
@@ -971,11 +1010,46 @@ export class TimelineChartComponent {
       return;
     }
 
+    const normalizedKey = event.key.toLowerCase();
+    if (normalizedKey === 'i' && !event.ctrlKey && !event.metaKey && !event.altKey) {
+      if (!this.blocksKeyboardBlocked()) {
+        event.preventDefault();
+        this.insertMode.set(!this.insertMode());
+      }
+      return;
+    }
+
+    if (this.insertMode() && event.key === 'Escape') {
+      event.preventDefault();
+      this.insertMode.set(false);
+      return;
+    }
+
+    if (this.handleHalfPageScrollKey(event)) {
+      return;
+    }
+
+    // Allow moving the cursor line in normal mode without hijacking j/k scrolling:
+    // In normal mode, the cursor follows scrolling (j/k scroll, trackpad scroll, etc.).
+
     if (this.pendingFirstGTimer !== null && event.key !== 'g') {
       this.cancelPendingFirstG();
     }
 
-    if (this.pendingMotionCount && !this.isMotionCountDigit(event.key) && !this.isJKKey(event.key)) {
+    if (this.pendingFirstZTimer !== null && event.key !== 'z') {
+      this.cancelPendingFirstZ();
+    }
+
+    // Don't clear a pending count when the user is in the middle of typing a shifted command
+    // (e.g. "3" then press Shift, then "J").
+    const isModifierKey =
+      event.key === 'Shift' || event.key === 'Alt' || event.key === 'Control' || event.key === 'Meta';
+    if (
+      this.pendingMotionCount &&
+      !isModifierKey &&
+      !this.isMotionCountDigit(event.key) &&
+      !this.isJKKey(event.key)
+    ) {
       this.clearPendingMotionCount();
     }
 
@@ -1003,6 +1077,10 @@ export class TimelineChartComponent {
       return;
     }
 
+    if (this.handleCenterScrollKey(event)) {
+      return;
+    }
+
     if (this.handleKeyboardZoom(event)) {
       return;
     }
@@ -1013,23 +1091,161 @@ export class TimelineChartComponent {
 
     const nudgeDelta = this.nudgeKeyDelta(event.key);
     if (nudgeDelta !== null) {
-      const motion = this.isJKKey(event.key)
-        ? this.consumeMotionCount()
-        : { hours: 1, prefixed: false };
+      const isJK = this.isJKKey(event.key);
+      const consumed = isJK ? this.consumeMotionCount() : { count: 1, prefixed: false };
       if (this.hasNudgeableSelection()) {
-        const deltaMin = this.isJKKey(event.key)
-          ? motion.hours * MINUTES_PER_HOUR * (nudgeDelta > 0 ? 1 : -1)
-          : nudgeDelta;
-        this.nudgeSelectedBlocks(deltaMin, event, this.isJKKey(event.key));
-      } else if (this.isJKKey(event.key)) {
-        this.scrollTimeline(
-          nudgeDelta > 0 ? 1 : -1,
-          event,
-          motion.hours,
-          motion.prefixed
-        );
+        const hours = isJK ? Math.min(HOURS_PER_DAY, consumed.count) : 1;
+        const deltaMin = isJK ? hours * MINUTES_PER_HOUR * (nudgeDelta > 0 ? 1 : -1) : nudgeDelta;
+        this.nudgeSelectedBlocks(deltaMin, event, isJK);
+      } else if (isJK) {
+        // Normal mode with no selection: move the cursor; scroll only when cursor hits scrolloff.
+        event.preventDefault();
+        this.closeContextMenu();
+        this.hideTooltip();
+        const isUpperJK = event.key === 'J' || event.key === 'K';
+        const unitMin = event.shiftKey || isUpperJK ? MINUTES_PER_HOUR : this.cursorStepMinutes();
+        const count = consumed.prefixed ? consumed.count : 1;
+        const stepMin = unitMin * count * (nudgeDelta > 0 ? 1 : -1);
+        const snapUnit =
+          event.shiftKey || isUpperJK ? MINUTES_PER_HOUR : this.cursorStepMinutes();
+        this.moveCursorByMinutes(stepMin, snapUnit);
       }
     }
+  }
+
+  private handleHalfPageScrollKey(event: KeyboardEvent): boolean {
+    if (!event.ctrlKey || event.metaKey || event.altKey) {
+      return false;
+    }
+
+    const key = event.key.toLowerCase();
+    if (key !== 'd' && key !== 'u') {
+      return false;
+    }
+
+    if (this.blocksKeyboardBlocked()) {
+      return false;
+    }
+
+    const el = this.scrollContainer()?.nativeElement;
+    if (!el) {
+      return false;
+    }
+
+    event.preventDefault();
+    this.closeContextMenu();
+    this.hideTooltip();
+    this.clearPendingMotionCount();
+
+    const direction = key === 'd' ? 1 : -1;
+    const deltaMin = this.halfViewportMinutes(el) * direction;
+    this.moveCursorByMinutes(deltaMin, 1, true);
+    return true;
+  }
+
+  private visibleTimelineMinutes(): number {
+    const el = this.scrollContainer()?.nativeElement;
+    const inner = this.canvasInnerHeightPx();
+    if (!el || inner <= 0) {
+      return MINUTES_PER_DAY;
+    }
+    return (el.clientHeight / inner) * MINUTES_PER_DAY;
+  }
+
+  private halfViewportMinutes(el: HTMLElement): number {
+    const inner = this.canvasInnerHeightPx();
+    if (inner <= 0) {
+      return MINUTES_PER_DAY / 2;
+    }
+
+    const minutes = ((el.clientHeight / 2) / inner) * MINUTES_PER_DAY;
+    return Math.max(1, Math.round(minutes));
+  }
+
+  /** Largest allowed tier (60/30/15/5/1) that keeps ~6 steps across the visible range. */
+  private cursorStepMinutes(): number {
+    const visible = this.visibleTimelineMinutes();
+    const pxPerMin = this.pxPerHour() / MINUTES_PER_HOUR;
+    const steps =
+      pxPerMin >= CURSOR_STEP_MIN_PX
+        ? CURSOR_STEP_VIEWPORT_STEPS_FINE
+        : CURSOR_STEP_VIEWPORT_STEPS;
+    const maxStep = visible / steps;
+    for (const tier of CURSOR_STEP_TIERS) {
+      if (tier <= maxStep) {
+        return tier;
+      }
+    }
+    return 1;
+  }
+
+  private snapCursorMinutes(minutes: number, snapUnit = 1): number {
+    const unit = Math.max(1, snapUnit);
+    const snapped = Math.round(minutes / unit) * unit;
+    return Math.min(MINUTES_PER_DAY, Math.max(0, snapped));
+  }
+
+  private setCursorToNowAndScroll(el: HTMLElement): void {
+    const nowIso = new Date().toISOString();
+    const currentMin = minutesOnViewDate(nowIso, this.date(), this.timezone());
+    const snapped = this.snapCursorMinutes(currentMin, 1);
+    this.insertCursorMin.set(snapped);
+
+    // Put the cursor near the middle of the viewport on first load.
+    this.scrollCursorToVerticalCenter(el);
+    this.saveScrollViewport(el);
+  }
+
+  private scrollCursorToVerticalCenter(el: HTMLElement): void {
+    const cursorY = this.minutesToContentY(this.insertCursorMin());
+    const maxTop = Math.max(0, el.scrollHeight - el.clientHeight);
+    const targetTop = Math.min(maxTop, Math.max(0, cursorY - el.clientHeight / 2));
+    this.animateTimelineScrollTo(el, targetTop, CURSOR_SCROLL_ANIMATION_MS);
+  }
+
+  private moveCursorByMinutes(
+    deltaMin: number,
+    snapUnit = 1,
+    centerAfter = false
+  ): void {
+    const next = this.insertCursorMin() + deltaMin;
+    this.insertCursorMin.set(this.snapCursorMinutes(next, snapUnit));
+
+    const el = this.scrollContainer()?.nativeElement;
+    if (el) {
+      if (centerAfter) {
+        this.scrollCursorToVerticalCenter(el);
+      } else {
+        this.scrollToKeepCursorVisible(el);
+      }
+    }
+  }
+
+  private scrollToKeepCursorVisible(el: HTMLElement): void {
+    const cursorY = this.minutesToContentY(this.insertCursorMin());
+    const viewportH = el.clientHeight;
+    const maxTop = Math.max(0, el.scrollHeight - viewportH);
+    const marginPx = viewportH * CURSOR_SCROLL_MARGIN_FRACTION;
+    const scrollTop = el.scrollTop;
+
+    let targetTop = scrollTop;
+    if (cursorY < scrollTop + marginPx) {
+      targetTop = cursorY - marginPx;
+    } else if (cursorY > scrollTop + viewportH - marginPx) {
+      targetTop = cursorY + marginPx - viewportH;
+    } else {
+      return;
+    }
+
+    targetTop = Math.min(maxTop, Math.max(0, targetTop));
+    if (Math.abs(targetTop - scrollTop) < 0.5) {
+      return;
+    }
+
+    // Instant follow avoids flicker when j/k is pressed rapidly at the scroll margin.
+    this.cancelScrollAnimation();
+    this.stopContinuousScroll();
+    el.scrollTop = targetTop;
   }
 
   isDraggingBlock(positioned: PositionedBlock): boolean {
@@ -1810,18 +2026,29 @@ export class TimelineChartComponent {
     event.preventDefault();
     const next = `${this.pendingMotionCount}${event.key}`;
     const parsed = Number.parseInt(next, 10);
-    if (Number.isFinite(parsed) && parsed > 0 && parsed <= HOURS_PER_DAY) {
+    if (Number.isFinite(parsed) && parsed > 0 && parsed <= 999) {
       this.pendingMotionCount = next;
     }
     return true;
   }
 
-  private consumeMotionCount(): { hours: number; prefixed: boolean } {
+  private consumeMotionCount(): { count: number; prefixed: boolean } {
     const hadPending = this.pendingMotionCount.length > 0;
     const parsed = Number.parseInt(this.pendingMotionCount, 10);
     this.pendingMotionCount = '';
-    const hours = Number.isFinite(parsed) && parsed > 0 ? parsed : 1;
-    return { hours, prefixed: hadPending && Number.isFinite(parsed) && parsed > 0 };
+    const count = Number.isFinite(parsed) && parsed > 0 ? parsed : 1;
+    return { count, prefixed: hadPending && Number.isFinite(parsed) && parsed > 0 };
+  }
+
+  private motionCountHours(): { hours: number; prefixed: boolean } {
+    const consumed = this.consumeMotionCount();
+    return { hours: Math.min(HOURS_PER_DAY, consumed.count), prefixed: consumed.prefixed };
+  }
+
+  private motionCountSteps(): { steps: number; prefixed: boolean } {
+    const maxSteps = Math.floor(MINUTES_PER_DAY / this.cursorStepMinutes());
+    const consumed = this.consumeMotionCount();
+    return { steps: Math.min(maxSteps, consumed.count), prefixed: consumed.prefixed };
   }
 
   private hasNudgeableSelection(): boolean {
@@ -1914,10 +2141,20 @@ export class TimelineChartComponent {
   private handleGoToScrollKey(event: KeyboardEvent): boolean {
     if (event.key === 'G') {
       this.cancelPendingFirstG();
+      this.cancelPendingFirstZ();
       if (this.hasNudgeableSelection()) {
         this.moveSelectedBlocksToEdge('bottom', event);
       } else {
-        this.scrollTimelineToEdge('bottom', event);
+        // No selection: jump cursor to end of day.
+        event.preventDefault();
+        this.closeContextMenu();
+        this.hideTooltip();
+        this.clearPendingMotionCount();
+        this.insertCursorMin.set(MINUTES_PER_DAY);
+        const el = this.scrollContainer()?.nativeElement;
+        if (el) {
+          this.scrollToKeepCursorVisible(el);
+        }
       }
       return true;
     }
@@ -1938,10 +2175,19 @@ export class TimelineChartComponent {
 
     if (this.pendingFirstGTimer !== null) {
       this.cancelPendingFirstG();
+      this.cancelPendingFirstZ();
       if (this.hasNudgeableSelection()) {
         this.moveSelectedBlocksToEdge('top', event);
       } else {
-        this.scrollTimelineToEdge('top', event);
+        // No selection: jump cursor to start of day.
+        this.closeContextMenu();
+        this.hideTooltip();
+        this.clearPendingMotionCount();
+        this.insertCursorMin.set(0);
+        const el = this.scrollContainer()?.nativeElement;
+        if (el) {
+          this.scrollToKeepCursorVisible(el);
+        }
       }
       return true;
     }
@@ -1952,10 +2198,51 @@ export class TimelineChartComponent {
     return true;
   }
 
+  private handleCenterScrollKey(event: KeyboardEvent): boolean {
+    if (event.key !== 'z' || event.shiftKey || event.ctrlKey || event.metaKey || event.altKey) {
+      return false;
+    }
+
+    if (this.blocksKeyboardBlocked()) {
+      return false;
+    }
+
+    event.preventDefault();
+
+    if (event.repeat) {
+      return true;
+    }
+
+    if (this.pendingFirstZTimer !== null) {
+      this.cancelPendingFirstZ();
+      this.cancelPendingFirstG();
+      this.closeContextMenu();
+      this.hideTooltip();
+      this.clearPendingMotionCount();
+      const el = this.scrollContainer()?.nativeElement;
+      if (el) {
+        this.scrollCursorToVerticalCenter(el);
+      }
+      return true;
+    }
+
+    this.pendingFirstZTimer = setTimeout(() => {
+      this.pendingFirstZTimer = null;
+    }, GG_SEQUENCE_MS);
+    return true;
+  }
+
   private cancelPendingFirstG(): void {
     if (this.pendingFirstGTimer !== null) {
       clearTimeout(this.pendingFirstGTimer);
       this.pendingFirstGTimer = null;
+    }
+  }
+
+  private cancelPendingFirstZ(): void {
+    if (this.pendingFirstZTimer !== null) {
+      clearTimeout(this.pendingFirstZTimer);
+      this.pendingFirstZTimer = null;
     }
   }
 
@@ -1971,7 +2258,9 @@ export class TimelineChartComponent {
 
     event.preventDefault();
     const factor = direction === 'in' ? KEYBOARD_ZOOM_FACTOR : 1 / KEYBOARD_ZOOM_FACTOR;
-    this.applyZoomAtAnchor(this.zoomScale() * factor, this.getAnchorOffsetY());
+    const anchorOffsetY =
+      direction === 'in' ? this.getCursorAnchorOffsetY() : this.getAnchorOffsetY();
+    this.applyZoomAtAnchor(this.zoomScale() * factor, anchorOffsetY);
     return true;
   }
 
@@ -2128,7 +2417,11 @@ export class TimelineChartComponent {
     this.animateTimelineScrollTo(el, targetTop);
   }
 
-  private animateTimelineScrollTo(el: HTMLElement, targetTop: number): void {
+  private animateTimelineScrollTo(
+    el: HTMLElement,
+    targetTop: number,
+    durationMs = SCROLL_ANIMATION_MS
+  ): void {
     this.cancelScrollAnimation();
     this.stopContinuousScroll();
 
@@ -2141,7 +2434,7 @@ export class TimelineChartComponent {
 
     const startTime = performance.now();
     const tick = (now: number) => {
-      const progress = Math.min(1, (now - startTime) / SCROLL_ANIMATION_MS);
+      const progress = Math.min(1, (now - startTime) / durationMs);
       const eased = 1 - (1 - progress) ** 3;
       el.scrollTop = startTop + (clampedTarget - startTop) * eased;
       if (progress < 1) {
@@ -2315,6 +2608,16 @@ export class TimelineChartComponent {
 
   onGestureEnd(event: Event): void {
     event.preventDefault();
+  }
+
+  private getCursorAnchorOffsetY(): number {
+    const el = this.scrollContainer()?.nativeElement;
+    if (!el) {
+      return 0;
+    }
+
+    const cursorContentY = this.minutesToContentY(this.insertCursorMin());
+    return cursorContentY - el.scrollTop;
   }
 
   private getAnchorOffsetY(event?: WheelEvent): number {

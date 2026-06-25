@@ -88,6 +88,52 @@
   }
 }
 
+.day-calendar__insert-cursor {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: rgb(96 165 250 / 70%);
+  box-shadow:
+    0 0 0 1px rgb(96 165 250 / 12%),
+    0 2px 10px rgb(96 165 250 / 18%);
+  transform: translateY(-0.5px);
+  pointer-events: none;
+  z-index: 3;
+}
+
+.day-calendar__insert-cursor-label {
+  position: absolute;
+  left: 0.25rem;
+  top: 0;
+  transform: translateY(calc(-50% - 0.5px));
+  padding: 0.125rem 0.375rem;
+  border-radius: var(--radius-sm, 0.25rem);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+  white-space: nowrap;
+  color: rgb(29 78 216);
+  background: rgb(239 246 255 / 95%);
+  border: 1px solid rgb(96 165 250 / 45%);
+  box-shadow: 0 1px 4px rgb(29 78 216 / 10%);
+}
+
+.day-calendar__insert-cursor--active {
+  background: #ef4444;
+  box-shadow:
+    0 0 0 1px rgb(239 68 68 / 18%),
+    0 2px 10px rgb(239 68 68 / 25%);
+
+  .day-calendar__insert-cursor-label {
+    color: rgb(185 28 28);
+    background: rgb(254 242 242 / 95%);
+    border-color: rgb(239 68 68 / 45%);
+    box-shadow: 0 1px 4px rgb(185 28 28 / 10%);
+  }
+}
+
 .day-calendar__hour-line-wrap,
 .day-calendar__half-hour-line-wrap {
   position: absolute;
