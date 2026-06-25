@@ -27,12 +27,14 @@ import {
   DragMode,
   BlockDeletePayload,
   BlocksDayShiftPayload,
+  ActivityRenamePayload,
   EventCreateDraft,
   EventTimeChangePayload,
   RESIZE_HANDLE_PX,
   SNAP_MINUTES,
   buildCreateEventDraft,
   buildEventDayShiftPayload,
+  buildEventRenamePatch,
   buildEventTimePatch,
   buildRestorePayloadFromBlock,
   shiftViewDate,
@@ -113,6 +115,8 @@ const SCROLL_HOLD_PX_PER_SEC = 560;
 const SCROLL_HOLD_ARM_MS = 80;
 /** Window for the second `g` in `gg` (scroll to top). */
 const GG_SEQUENCE_MS = 400;
+/** Window for the second `d` in `dd` (delete block at cursor). */
+const DD_SEQUENCE_MS = 400;
 /** Faster scroll-follow for cursor moves. */
 const CURSOR_SCROLL_ANIMATION_MS = 40;
 
@@ -511,6 +515,14 @@ interface CreatePreview {
   endMin: number;
 }
 
+interface RenameLabelState {
+  eventId: string;
+  positioned: PositionedBlock;
+  previewTopPct: number;
+  previewHeightPct: number;
+  previousTitle: string;
+}
+
 interface ActiveCreateDrag {
   anchorStartMin: number;
   anchorClientY: number;
@@ -541,6 +553,7 @@ export class TimelineChartComponent {
   readonly selectDate = output<string>();
   readonly eventTimeChange = output<EventTimeChangePayload>();
   readonly activityCreate = output<EventCreateDraft>();
+  readonly activityRename = output<ActivityRenamePayload>();
   readonly blockDelete = output<BlockDeletePayload>();
   readonly blocksDelete = output<BlockDeletePayload[]>();
   readonly blocksDayShift = output<BlocksDayShiftPayload>();
@@ -553,10 +566,14 @@ export class TimelineChartComponent {
   private readonly scrollContainer = viewChild<ElementRef<HTMLElement>>('scrollContainer');
   private readonly calendarCanvas = viewChild<ElementRef<HTMLElement>>('calendarCanvas');
   private readonly createLabelInput = viewChild<ElementRef<HTMLInputElement>>('createLabelInput');
+  private readonly renameLabelInput = viewChild<ElementRef<HTMLInputElement>>('renameLabelInput');
   private skipCreateLabelBlur = false;
+  private skipRenameLabelBlur = false;
   private createBusyWasTrue = false;
   private labelBlurReady = false;
+  private renameBlurReady = false;
   private createLabelFocusKey = 0;
+  private renameLabelFocusKey = 0;
   private scrollResizeObserver: ResizeObserver | null = null;
   private pinchStartScale = DEFAULT_ZOOM;
   private pointerAnchorY = 0;
@@ -578,13 +595,26 @@ export class TimelineChartComponent {
   readonly activeCreateDrag = signal<ActiveCreateDrag | null>(null);
   readonly createPreview = signal<CreatePreview | null>(null);
   readonly labelingCreate = signal<CreatePreview | null>(null);
+  readonly labelingRename = signal<RenameLabelState | null>(null);
   readonly createLabel = signal('');
+  readonly renameLabel = signal('');
   readonly insertMode = signal(false);
+  readonly insertAnchorMin = signal<number | null>(null);
   readonly insertCursorMin = signal(0);
   readonly insertCursorTopPct = computed(
     () => (this.insertCursorMin() / MINUTES_PER_DAY) * 100
   );
   readonly insertCursorLabel = computed(() => this.formatCursorTime(this.insertCursorMin()));
+  readonly insertGhostPreview = computed((): CreatePreview | null => {
+    if (!this.insertMode()) {
+      return null;
+    }
+    const anchor = this.insertAnchorMin();
+    if (anchor === null) {
+      return null;
+    }
+    return this.buildInsertGhostPreview(anchor, this.insertCursorMin());
+  });
   private cursorInitialized = false;
   readonly selectedBlockKeys = signal<Set<string>>(new Set());
   /** Stable across layout/date changes; used to keep selection after h/l day moves. */
@@ -623,6 +653,7 @@ export class TimelineChartComponent {
     hours: number;
   } | null = null;
   private pendingFirstGTimer: ReturnType<typeof setTimeout> | null = null;
+  private pendingFirstDTimer: ReturnType<typeof setTimeout> | null = null;
   private pendingFirstZTimer: ReturnType<typeof setTimeout> | null = null;
   private pendingMotionCount = '';
   private readonly boundScrollKeyUp = (event: KeyboardEvent) => {
@@ -688,6 +719,7 @@ export class TimelineChartComponent {
         this.cancelDrag();
         this.cancelCreateDrag();
         this.cancelActivityLabel();
+        this.cancelActivityRename();
       }
     });
 
@@ -703,6 +735,20 @@ export class TimelineChartComponent {
         return;
       }
       untracked(() => this.queueCreateLabelFocus(focusKey));
+    });
+
+    effect(() => {
+      const renaming = this.labelingRename();
+      if (!renaming) {
+        this.renameBlurReady = false;
+        return;
+      }
+      const focusKey = this.renameLabelFocusKey;
+      const inputRef = this.renameLabelInput();
+      if (!inputRef?.nativeElement.isConnected) {
+        return;
+      }
+      untracked(() => this.queueRenameLabelFocus(focusKey));
     });
 
     effect(() => {
@@ -736,6 +782,8 @@ export class TimelineChartComponent {
         if (!this.pendingReselectTargetDate()) {
           this.clearSelection();
         }
+        this.exitInsertMode();
+        this.cancelActivityRename();
         this.scrollRestorePending = true;
       }
     });
@@ -944,7 +992,7 @@ export class TimelineChartComponent {
     event.stopPropagation();
     this.hideTooltip();
     this.closeContextMenu();
-    if (!this.labelingCreate()) {
+    if (!this.labelingCreate() && !this.labelingRename()) {
       if (event.shiftKey) {
         this.toggleBlockInSelection(positioned);
       } else {
@@ -1014,14 +1062,33 @@ export class TimelineChartComponent {
     if (normalizedKey === 'i' && !event.ctrlKey && !event.metaKey && !event.altKey) {
       if (!this.blocksKeyboardBlocked()) {
         event.preventDefault();
-        this.insertMode.set(!this.insertMode());
+        this.closeContextMenu();
+        this.hideTooltip();
+        if (this.insertMode()) {
+          this.confirmInsertGhost();
+        } else {
+          this.enterInsertMode();
+        }
       }
       return;
     }
 
     if (this.insertMode() && event.key === 'Escape') {
       event.preventDefault();
-      this.insertMode.set(false);
+      this.exitInsertMode();
+      return;
+    }
+
+    if (
+      normalizedKey === 'r' &&
+      !event.ctrlKey &&
+      !event.metaKey &&
+      !event.altKey
+    ) {
+      if (!this.blocksKeyboardBlocked() && !this.insertMode()) {
+        event.preventDefault();
+        this.beginRenameAtCursor();
+      }
       return;
     }
 
@@ -1034,6 +1101,10 @@ export class TimelineChartComponent {
 
     if (this.pendingFirstGTimer !== null && event.key !== 'g') {
       this.cancelPendingFirstG();
+    }
+
+    if (this.pendingFirstDTimer !== null && event.key !== 'd') {
+      this.cancelPendingFirstD();
     }
 
     if (this.pendingFirstZTimer !== null && event.key !== 'z') {
@@ -1057,6 +1128,11 @@ export class TimelineChartComponent {
       if (this.contextMenu() || this.labelingCreate()) {
         return;
       }
+      if (this.labelingRename()) {
+        event.preventDefault();
+        this.cancelActivityRename();
+        return;
+      }
       this.clearPendingMotionCount();
       this.clearSelection();
       return;
@@ -1074,6 +1150,10 @@ export class TimelineChartComponent {
     }
 
     if (this.handleGoToScrollKey(event)) {
+      return;
+    }
+
+    if (this.handleDeleteAtCursorKey(event)) {
       return;
     }
 
@@ -1185,6 +1265,56 @@ export class TimelineChartComponent {
     return Math.min(MINUTES_PER_DAY, Math.max(0, snapped));
   }
 
+  private enterInsertMode(): void {
+    this.clearSelection();
+    this.clearPendingMotionCount();
+    this.insertAnchorMin.set(this.insertCursorMin());
+    this.insertMode.set(true);
+  }
+
+  private exitInsertMode(): void {
+    this.insertMode.set(false);
+    this.insertAnchorMin.set(null);
+  }
+
+  private confirmInsertGhost(): void {
+    const anchor = this.insertAnchorMin();
+    if (anchor === null) {
+      this.exitInsertMode();
+      return;
+    }
+
+    const clamped = clampCreateDragInterval(anchor, this.insertCursorMin());
+    let { startMin, endMin } = clamped;
+    if (endMin <= startMin) {
+      endMin = Math.min(MINUTES_PER_DAY, startMin + Math.max(1, this.cursorStepMinutes()));
+    }
+
+    const preview: CreatePreview = {
+      startMin,
+      endMin,
+      previewTopPct: (startMin / MINUTES_PER_DAY) * 100,
+      previewHeightPct: ((endMin - startMin) / MINUTES_PER_DAY) * 100
+    };
+    this.exitInsertMode();
+    this.beginLabelingCreate(preview);
+  }
+
+  private buildInsertGhostPreview(anchorMin: number, cursorMin: number): CreatePreview {
+    const clamped = clampCreateDragInterval(anchorMin, cursorMin);
+    let { startMin, endMin } = clamped;
+    if (endMin - startMin < 1) {
+      endMin = Math.min(MINUTES_PER_DAY, startMin + 1);
+    }
+
+    return {
+      previewTopPct: (startMin / MINUTES_PER_DAY) * 100,
+      previewHeightPct: ((endMin - startMin) / MINUTES_PER_DAY) * 100,
+      startMin,
+      endMin
+    };
+  }
+
   private setCursorToNowAndScroll(el: HTMLElement): void {
     const nowIso = new Date().toISOString();
     const currentMin = minutesOnViewDate(nowIso, this.date(), this.timezone());
@@ -1278,7 +1408,7 @@ export class TimelineChartComponent {
     if (target.dataset['resize']) {
       return;
     }
-    if (this.labelingCreate()) {
+    if (this.labelingCreate() || this.labelingRename()) {
       return;
     }
 
@@ -1307,7 +1437,7 @@ export class TimelineChartComponent {
     if (event.button !== 0 || event.target !== event.currentTarget) {
       return;
     }
-    if (this.activeDrag() || this.activeCreateDrag() || this.labelingCreate()) {
+    if (this.activeDrag() || this.activeCreateDrag() || this.labelingCreate() || this.labelingRename() || this.insertMode()) {
       return;
     }
 
@@ -1598,6 +1728,121 @@ export class TimelineChartComponent {
     }
   }
 
+  private beginRenameAtCursor(): void {
+    const positioned = this.findEditableBlockAtCursor();
+    if (!positioned) {
+      return;
+    }
+
+    const block = positioned.block;
+    this.cancelActivityLabel();
+    this.cancelActivityRename();
+    this.closeContextMenu();
+    this.hideTooltip();
+    this.clearPendingMotionCount();
+    this.clearSelection();
+
+    this.renameLabelFocusKey += 1;
+    const focusKey = this.renameLabelFocusKey;
+    this.renameBlurReady = false;
+    this.renameLabel.set(block.activity);
+    this.labelingRename.set(null);
+
+    window.setTimeout(() => {
+      if (focusKey !== this.renameLabelFocusKey) {
+        return;
+      }
+      this.labelingRename.set({
+        eventId: block.eventId!,
+        positioned,
+        previewTopPct: positioned.topPct,
+        previewHeightPct: positioned.heightPct,
+        previousTitle: block.activity
+      });
+      this.queueRenameLabelFocus(focusKey);
+    }, 0);
+  }
+
+  confirmActivityRename(event?: Event): void {
+    event?.preventDefault();
+
+    const renaming = this.labelingRename();
+    if (!renaming) {
+      return;
+    }
+
+    const title = this.renameLabel().trim();
+    if (!title || title === renaming.previousTitle) {
+      this.cancelActivityRename();
+      return;
+    }
+
+    const block = renaming.positioned.block;
+    const viewDate = this.date();
+    const previous = buildEventRenamePatch(block, viewDate, renaming.previousTitle);
+    const next = buildEventRenamePatch(block, viewDate, title);
+
+    this.activityRename.emit({ label: 'Rename block', previous, next });
+    this.cancelActivityRename();
+    this.clearSelection();
+  }
+
+  cancelActivityRename(): void {
+    this.renameLabelFocusKey += 1;
+    this.skipRenameLabelBlur = true;
+    this.renameBlurReady = false;
+    this.labelingRename.set(null);
+    this.renameLabel.set('');
+  }
+
+  onRenameLabelBlur(): void {
+    if (this.skipRenameLabelBlur) {
+      this.skipRenameLabelBlur = false;
+      return;
+    }
+    if (!this.renameBlurReady) {
+      return;
+    }
+    this.confirmActivityRename();
+  }
+
+  onRenameLabelKeydown(event: KeyboardEvent): void {
+    event.stopPropagation();
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      this.skipRenameLabelBlur = true;
+      this.confirmActivityRename(event);
+    } else if (event.key === 'Escape') {
+      event.preventDefault();
+      this.cancelActivityRename();
+    }
+  }
+
+  private queueRenameLabelFocus(focusKey: number, attempt = 0): void {
+    if (focusKey !== this.renameLabelFocusKey || !this.labelingRename()) {
+      return;
+    }
+
+    const input = this.renameLabelInput()?.nativeElement;
+    if (input?.isConnected) {
+      input.focus({ preventScroll: true });
+      input.select();
+      window.setTimeout(() => {
+        if (focusKey === this.renameLabelFocusKey) {
+          this.renameBlurReady = true;
+        }
+      }, 250);
+      return;
+    }
+
+    if (attempt < 20) {
+      window.setTimeout(
+        () => this.queueRenameLabelFocus(focusKey, attempt + 1),
+        attempt < 5 ? 0 : 16
+      );
+    }
+  }
+
   private updateCreatePreview(currentMin: number, clientY: number): void {
     const drag = this.activeCreateDrag();
     if (!drag) {
@@ -1676,7 +1921,7 @@ export class TimelineChartComponent {
 
     this.teardownPendingBlockListeners();
 
-    if (isClick && !this.labelingCreate()) {
+    if (isClick && !this.labelingCreate() && !this.labelingRename()) {
       this.applyBlockClickSelection(pending.positioned, pending.shiftKey);
       event.preventDefault();
       event.stopPropagation();
@@ -1753,6 +1998,63 @@ export class TimelineChartComponent {
     this.selectedEventIds.set(new Set());
     this.pendingReselectTargetDate.set(null);
     this.blocksSelectionChange.emit([]);
+  }
+
+  private deleteBlockAtCursor(event: KeyboardEvent): void {
+    const positioned = this.findEditableBlockAtCursor();
+    if (!positioned) {
+      return;
+    }
+
+    const block = positioned.block;
+    const eventId = block.eventId;
+    if (!eventId) {
+      return;
+    }
+
+    event.preventDefault();
+    this.closeContextMenu();
+    this.hideTooltip();
+    this.blockDelete.emit({
+      eventId,
+      restore: buildRestorePayloadFromBlock(block, this.date())
+    });
+    this.clearSelection();
+  }
+
+  private findEditableBlockAtCursor(): PositionedBlock | null {
+    const cursorMin = this.insertCursorMin();
+    const viewDate = this.date();
+    const minutesOnView = (iso: string, vd: string) =>
+      minutesOnViewDate(iso, vd, this.timezone());
+    const hits: PositionedBlock[] = [];
+
+    for (const positioned of this.renderBlocks()) {
+      const block = positioned.block;
+      if (!this.blockIsEditable(block) || !block.eventId) {
+        continue;
+      }
+
+      const { startMin, endMin } = visibleBlockIntervalMinutes(block, viewDate, minutesOnView);
+      if (cursorMin < startMin || cursorMin >= endMin - 0.01) {
+        continue;
+      }
+      hits.push(positioned);
+    }
+
+    if (hits.length === 0) {
+      return null;
+    }
+
+    hits.sort((a, b) => {
+      if (b.column !== a.column) {
+        return b.column - a.column;
+      }
+      const aStart = visibleBlockIntervalMinutes(a.block, viewDate, minutesOnView).startMin;
+      const bStart = visibleBlockIntervalMinutes(b.block, viewDate, minutesOnView).startMin;
+      return bStart - aStart;
+    });
+    return hits[0];
   }
 
   private deleteSelectedBlocks(event: KeyboardEvent): void {
@@ -2198,6 +2500,36 @@ export class TimelineChartComponent {
     return true;
   }
 
+  private handleDeleteAtCursorKey(event: KeyboardEvent): boolean {
+    if (event.key !== 'd' || event.shiftKey || event.ctrlKey || event.metaKey || event.altKey) {
+      return false;
+    }
+
+    if (this.blocksKeyboardBlocked() || this.insertMode()) {
+      return false;
+    }
+
+    event.preventDefault();
+
+    if (event.repeat) {
+      return true;
+    }
+
+    if (this.pendingFirstDTimer !== null) {
+      this.cancelPendingFirstD();
+      this.cancelPendingFirstG();
+      this.cancelPendingFirstZ();
+      this.clearPendingMotionCount();
+      this.deleteBlockAtCursor(event);
+      return true;
+    }
+
+    this.pendingFirstDTimer = setTimeout(() => {
+      this.pendingFirstDTimer = null;
+    }, DD_SEQUENCE_MS);
+    return true;
+  }
+
   private handleCenterScrollKey(event: KeyboardEvent): boolean {
     if (event.key !== 'z' || event.shiftKey || event.ctrlKey || event.metaKey || event.altKey) {
       return false;
@@ -2236,6 +2568,13 @@ export class TimelineChartComponent {
     if (this.pendingFirstGTimer !== null) {
       clearTimeout(this.pendingFirstGTimer);
       this.pendingFirstGTimer = null;
+    }
+  }
+
+  private cancelPendingFirstD(): void {
+    if (this.pendingFirstDTimer !== null) {
+      clearTimeout(this.pendingFirstDTimer);
+      this.pendingFirstDTimer = null;
     }
   }
 
@@ -2450,6 +2789,7 @@ export class TimelineChartComponent {
   private blocksKeyboardBlocked(): boolean {
     return Boolean(
       this.labelingCreate() ||
+      this.labelingRename() ||
       this.contextMenu() ||
       this.activeDrag() ||
       this.activeCreateDrag()

@@ -32,21 +32,12 @@
 
         <div
           class="day-calendar__canvas"
-          [class.day-calendar__canvas--labeling]="labelingCreate()"
+          [class.day-calendar__canvas--labeling]="labelingCreate() || labelingRename()"
           #calendarCanvas
           role="list"
           aria-label="Activity timeline"
           (pointerdown)="onCanvasPointerDown($event)"
         >
-          <div
-            class="day-calendar__insert-cursor"
-            [class.day-calendar__insert-cursor--active]="insertMode()"
-            [style.top.%]="insertCursorTopPct()"
-            [attr.aria-label]="'Cursor at ' + insertCursorLabel()"
-          >
-            <span class="day-calendar__insert-cursor-label">{{ insertCursorLabel() }}</span>
-          </div>
-
           @for (guide of hourGuides(); track guide.hour) {
             <div class="day-calendar__hour-line-wrap" [style.top.%]="guide.topPct">
               <div class="day-calendar__hour-line" aria-hidden="true"></div>
@@ -133,6 +124,21 @@
             }
           }
 
+          @if (insertGhostPreview(); as preview) {
+            <div
+              class="day-calendar__event day-calendar__event--create-preview day-calendar__event--insert-ghost"
+              role="presentation"
+              aria-hidden="true"
+              [style.top.%]="preview.previewTopPct"
+              [style.height.%]="preview.previewHeightPct"
+            >
+              <span class="day-calendar__event-title">New activity</span>
+              <span class="day-calendar__event-meta">
+                {{ formatCreatePreviewTimeRange(preview) }}
+              </span>
+            </div>
+          }
+
           @if (createPreview(); as preview) {
             <div
               class="day-calendar__event day-calendar__event--create-preview"
@@ -144,6 +150,36 @@
               <span class="day-calendar__event-title">New activity</span>
               <span class="day-calendar__event-meta">
                 {{ formatCreatePreviewTimeRange(preview) }}
+              </span>
+            </div>
+          }
+
+          @if (labelingRename(); as renaming) {
+            <div
+              class="day-calendar__event day-calendar__event--create-label"
+              role="listitem"
+              [attr.aria-label]="'Rename activity, ' + formatTimeRange(renaming.positioned.block)"
+              [style.top.%]="renaming.previewTopPct"
+              [style.height.%]="renaming.previewHeightPct"
+              [style.left.%]="blockLeftPct(renaming.positioned)"
+              [style.width.%]="blockWidthPct(renaming.positioned)"
+              [style.background]="categoryColor(renaming.positioned.block.category)"
+              [class.day-calendar__event--compact]="blockIsCompact(renaming.positioned)"
+              (pointerdown)="$event.stopPropagation()"
+            >
+              <input
+                #renameLabelInput
+                class="day-calendar__event-title day-calendar__event-title-input"
+                type="text"
+                [value]="renameLabel()"
+                (input)="renameLabel.set($any($event.target).value)"
+                (keydown)="onRenameLabelKeydown($event)"
+                (blur)="onRenameLabelBlur()"
+                autocomplete="off"
+                spellcheck="false"
+              />
+              <span class="day-calendar__event-meta">
+                {{ formatTimeRange(renaming.positioned.block) }}
               </span>
             </div>
           }
@@ -194,6 +230,20 @@
               </span>
             </div>
           }
+
+          <div
+            class="day-calendar__insert-cursor"
+            [class.day-calendar__insert-cursor--active]="insertMode()"
+            [style.top.%]="insertCursorTopPct()"
+            [attr.aria-label]="'Cursor at ' + insertCursorLabel()"
+          >
+            <span
+              class="day-calendar__insert-cursor-label"
+              [class.day-calendar__insert-cursor-label--active]="insertMode()"
+            >
+              {{ insertCursorLabel() }}
+            </span>
+          </div>
         </div>
       </div>
     </div>
