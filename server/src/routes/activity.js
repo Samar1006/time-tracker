@@ -16,6 +16,7 @@ import {
 } from '../services/activityStore.js';
 import {
   aggregateTimeline,
+  classifyStoredEvent,
   parseDateOnly,
   todayUtcDate,
   eventOverlapsLocalDate,
@@ -161,7 +162,7 @@ router.post('/events', requireAuth, async (req, res, next) => {
     for (let i = 0; i < incoming.length; i += 1) {
       const result = normalizeEvent(incoming[i], i, authUserId);
       if (result.error) return res.status(400).json({ error: result.error });
-      normalized.push(result);
+      normalized.push(classifyStoredEvent(result));
     }
 
     const byDay = new Map();

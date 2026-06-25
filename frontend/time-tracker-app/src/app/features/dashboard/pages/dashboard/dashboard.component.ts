@@ -322,45 +322,70 @@ export class DashboardComponent {
     this.createBusy.set(true);
 
     const pendingId = `pending-${Date.now()}`;
-    const timeline = this.displayTimeline();
-    if (timeline) {
-      this.setTimelineCache(viewDate, applyEventCreateToTimeline(timeline, draft, pendingId));
-    }
 
-    this.timelineService.createEvent(draft).subscribe({
-      next: (response) => {
-        const createdId = response.ids[0];
-        if (!createdId) {
-          return;
-        }
+    this.timelineService
+      .categorizeActivity(draft.title)
+      .pipe(
+        catchError(() =>
+          of({ category: 'uncategorized', confidence: 0, method: 'none' })
+        ),
+        switchMap(({ category, confidence }) => {
+          const classified: EventCreateDraft = {
+            ...draft,
+            metadata: {
+              ...draft.metadata,
+              category,
+              confidence
+            }
+          };
 
-        const current = this.displayTimeline();
-        if (current) {
-          let updated = removeEventFromTimeline(current, pendingId);
-          updated = applyEventCreateToTimeline(updated, draft, createdId);
-          this.setTimelineCache(viewDate, updated);
-        }
-
-        let currentId = createdId;
-        this.undoService.record({
-          label: 'Create block',
-          viewDate,
-          undo: () => this.deleteEventForUndo(currentId, viewDate),
-          redo: async () => {
-            const res = await this.createEventForUndo(draft);
-            currentId = res.ids[0];
+          const timeline = this.displayTimeline();
+          if (timeline) {
+            this.setTimelineCache(
+              viewDate,
+              applyEventCreateToTimeline(timeline, classified, pendingId)
+            );
           }
-        });
-      },
-      error: () => {
-        const current = this.displayTimeline();
-        if (current) {
-          this.setTimelineCache(viewDate, removeEventFromTimeline(current, pendingId));
-        }
-        this.patchError.set('Could not create activity. Try again.');
-      },
-      complete: () => this.createBusy.set(false)
-    });
+
+          return this.timelineService.createEvent(classified).pipe(
+            map((response) => ({ response, classified }))
+          );
+        })
+      )
+      .subscribe({
+        next: ({ response, classified }) => {
+          const createdId = response.ids[0];
+          if (!createdId) {
+            return;
+          }
+
+          const current = this.displayTimeline();
+          if (current) {
+            let updated = removeEventFromTimeline(current, pendingId);
+            updated = applyEventCreateToTimeline(updated, classified, createdId);
+            this.setTimelineCache(viewDate, updated);
+          }
+
+          let currentId = createdId;
+          this.undoService.record({
+            label: 'Create block',
+            viewDate,
+            undo: () => this.deleteEventForUndo(currentId, viewDate),
+            redo: async () => {
+              const res = await this.createEventForUndo(classified);
+              currentId = res.ids[0];
+            }
+          });
+        },
+        error: () => {
+          const current = this.displayTimeline();
+          if (current) {
+            this.setTimelineCache(viewDate, removeEventFromTimeline(current, pendingId));
+          }
+          this.patchError.set('Could not create activity. Try again.');
+        },
+        complete: () => this.createBusy.set(false)
+      });
   }
 
   onSelectionChange(blocks: TimelineBlock[]): void {

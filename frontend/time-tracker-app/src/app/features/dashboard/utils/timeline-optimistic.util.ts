@@ -131,6 +131,10 @@ function blockFromCreateDraft(draft: EventCreateDraft, eventId: string): Timelin
   const start = new Date(startMs).toISOString();
   const end = new Date(endMs).toISOString();
   const category = (draft.metadata.category ?? 'uncategorized') as ActivityCategory;
+  const confidence =
+    typeof draft.metadata.confidence === 'number' && Number.isFinite(draft.metadata.confidence)
+      ? draft.metadata.confidence
+      : 1;
 
   return {
     start,
@@ -143,7 +147,7 @@ function blockFromCreateDraft(draft: EventCreateDraft, eventId: string): Timelin
     activity: draft.title,
     category,
     source: 'manual',
-    confidence: 1,
+    confidence,
     durationSec: draft.durationSec
   };
 }

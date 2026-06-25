@@ -222,6 +222,30 @@ describe('activity routes (API contract)', () => {
     assert.equal(morning.body.hours[5].blocks.some((b) => b.activity === 'sleeping'), true);
   });
 
+  it('POST /api/events classifies manual events by title', async () => {
+    const ingest = await request('/api/events', {
+      method: 'POST',
+      headers: bearer(token),
+      body: {
+        timestamp: `${DATE}T14:00:00.000Z`,
+        type: 'manual',
+        title: 'debugging the backend api',
+        durationSec: 3600,
+        metadata: { localDate: DATE, category: 'uncategorized' },
+      },
+    });
+    assert.equal(ingest.status, 201);
+
+    const timeline = await request(`/api/timeline?date=${DATE}&timezone=UTC`, {
+      headers: bearer(token),
+    });
+    const block = timeline.body.hours[14].blocks.find(
+      (entry) => entry.activity === 'debugging the backend api',
+    );
+    assert.ok(block);
+    assert.equal(block.category, 'work');
+  });
+
   it('PATCH /api/events/:eventId updates event time and duration', async () => {
     const ingest = await request('/api/events', {
       method: 'POST',

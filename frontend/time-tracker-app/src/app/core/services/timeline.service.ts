@@ -33,6 +33,13 @@ export interface CreateEventResponse {
   ids: string[];
 }
 
+export interface CategorizeActivityResponse {
+  category: string;
+  confidence: number;
+  method: string;
+  matched?: string[];
+}
+
 @Injectable({ providedIn: 'root' })
 export class TimelineService {
   private readonly http = inject(HttpClient);
@@ -69,6 +76,13 @@ export class TimelineService {
 
   createEvent(payload: CreateEventPayload): Observable<CreateEventResponse> {
     return this.http.post<CreateEventResponse>(`${environment.apiUrl}/api/events`, payload);
+  }
+
+  categorizeActivity(text: string): Observable<CategorizeActivityResponse> {
+    return this.http.post<CategorizeActivityResponse>(
+      `${environment.apiUrl}/api/categorize/activity`,
+      { text, useVector: false }
+    );
   }
 
   deleteEvent(eventId: string, date: string): Observable<{ deleted: boolean; eventId: string }> {
