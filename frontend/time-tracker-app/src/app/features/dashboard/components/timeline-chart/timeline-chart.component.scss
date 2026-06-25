@@ -70,6 +70,7 @@
 .day-calendar__canvas {
   position: relative;
   border-left: 1px solid var(--color-border);
+  border-bottom: 1px solid var(--color-border);
   background: linear-gradient(
     180deg,
     rgb(29 78 216 / 2%) 0%,
