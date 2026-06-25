@@ -1,5 +1,5 @@
 <app-shell [userId]="userId()">
-  @if (loading() && !displayTimeline()) {
+  @if (loading() && !displayTimeline() && !hasLoadedTimeline()) {
     <p class="dashboard-status">Loading timeline…</p>
   } @else if (error() && !displayTimeline()) {
     <p class="dashboard-status dashboard-status--error">{{ error() }}</p>
@@ -12,10 +12,12 @@
           [timezone]="displayTimeline()?.timezone ?? 'UTC'"
           [patchError]="patchError()"
           [createBusy]="createBusy()"
+          [preservedSelectionIds]="preservedSelectionIds()"
           (prevDay)="previousDay()"
           (nextDay)="nextDay()"
           (selectDate)="selectDate($event)"
           (eventTimeChange)="onEventTimeChange($event)"
+          (blocksDayShift)="onBlocksDayShift($event)"
           (activityCreate)="onActivityCreate($event)"
           (blockDelete)="onBlockDelete($event)"
           (blocksSelectionChange)="onSelectionChange($event)"

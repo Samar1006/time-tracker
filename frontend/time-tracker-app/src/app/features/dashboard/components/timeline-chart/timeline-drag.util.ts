@@ -22,6 +22,12 @@ export interface EventTimeChangePayload {
   next: EventTimePatch;
 }
 
+export interface BlocksDayShiftPayload {
+  changes: EventTimeChangePayload[];
+  targetDate: string;
+  sourceDate: string;
+}
+
 export interface BlockDeletePayload {
   eventId: string;
   restore: CreateEventPayload;
@@ -186,4 +192,66 @@ export function buildEventTimePatch(
     durationSec,
     metadata: { localDate: viewDate }
   };
+}
+
+export function shiftViewDate(dateString: string, days: number): string {
+  const date = new Date(`${dateString}T12:00:00`);
+  date.setDate(date.getDate() + days);
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function fullEventDurationSec(block: TimelineBlock): number {
+  if (block.eventStart && block.eventEnd) {
+    return Math.max(
+      0,
+      Math.round((Date.parse(block.eventEnd) - Date.parse(block.eventStart)) / 1000)
+    );
+  }
+  return block.durationSec;
+}
+
+/** Shift an event by whole days, preserving wall-clock start and duration. */
+export function buildEventDayShiftPayload(
+  block: TimelineBlock,
+  viewDate: string,
+  dayDelta: number,
+  minutesOnViewDate: (iso: string, viewDate: string) => number
+): EventTimeChangePayload | null {
+  if (!block.eventId || dayDelta === 0) {
+    return null;
+  }
+
+  const interval = visibleBlockIntervalMinutes(block, viewDate, minutesOnViewDate);
+  const previous = buildEventTimePatch(
+    block,
+    viewDate,
+    interval.startMin,
+    interval.endMin,
+    minutesOnViewDate
+  );
+
+  const eventStartIso = block.eventStart ?? block.start;
+  const durationSec = fullEventDurationSec(block);
+  const startMin = minutesOnViewDate(eventStartIso, viewDate);
+  const targetDate = shiftViewDate(viewDate, dayDelta);
+  const shiftedTimestamp = new Date(
+    Date.parse(eventStartIso) + dayDelta * 24 * 60 * 60 * 1000
+  ).toISOString();
+
+  const metadata: EventTimePatch['metadata'] = { localDate: targetDate };
+  if (startMin + durationSec / 60 > MINUTES_PER_DAY || block.spansNextDay) {
+    metadata.endLocalDate = shiftViewDate(targetDate, 1);
+  }
+
+  const next: EventTimePatch = {
+    eventId: block.eventId,
+    timestamp: shiftedTimestamp,
+    durationSec,
+    metadata
+  };
+
+  return { label: 'Move block', previous, next };
 }
