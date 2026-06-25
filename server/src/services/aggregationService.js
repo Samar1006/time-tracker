@@ -223,6 +223,38 @@ function mergeKey(slice) {
   ].join('|');
 }
 
+function blocksAreAdjacent(a, b) {
+  if (a.end === b.start) return true;
+  const gapMs = Date.parse(b.start) - Date.parse(a.end);
+  return gapMs >= 0 && gapMs <= 1000;
+}
+
+/** Merge back-to-back tracked events (e.g. Chrome extension 1-min flushes) into one block. */
+function coalesceAdjacentTrackedBlocks(blocks) {
+  const sorted = [...blocks].sort((a, b) => a.start.localeCompare(b.start));
+  const merged = [];
+
+  for (const block of sorted) {
+    const last = merged.at(-1);
+    if (
+      last &&
+      last.source === 'tracked' &&
+      block.source === 'tracked' &&
+      last.activity === block.activity &&
+      last.category === block.category &&
+      blocksAreAdjacent(last, block)
+    ) {
+      last.end = block.end;
+      last.durationSec += block.durationSec;
+      last.eventEnd = block.eventEnd ?? block.end;
+    } else {
+      merged.push({ ...block });
+    }
+  }
+
+  return merged;
+}
+
 /**
  * @param {import('./activityStore.js').StoredEvent[]} events
  * @param {string} date YYYY-MM-DD
@@ -286,6 +318,7 @@ export function aggregateTimeline(events, date, { userId, timezone = 'UTC' } = {
   }
 
   for (const hourBucket of hours) {
+    hourBucket.blocks = coalesceAdjacentTrackedBlocks(hourBucket.blocks);
     hourBucket.blocks.sort((a, b) => b.durationSec - a.durationSec);
   }
 
