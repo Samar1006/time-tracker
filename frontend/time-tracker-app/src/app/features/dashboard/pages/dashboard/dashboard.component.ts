@@ -234,6 +234,10 @@ export class DashboardComponent {
     });
   }
 
+  onSelectionChange(_blocks: TimelineBlock[]): void {
+    // Wired for follow-up bulk delete / undo integration.
+  }
+
   onBlockDelete(payload: BlockDeletePayload): void {
     if (!this.userId()) {
       return;
