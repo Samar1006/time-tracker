@@ -85,6 +85,8 @@ const MINUTES_PER_DAY = HOURS_PER_DAY * MINUTES_PER_HOUR;
 const HALF_HOUR_STEP_PCT = (0.5 / HOURS_PER_DAY) * 100;
 const DEFAULT_ZOOM = 1;
 const MAX_ZOOM = 12;
+/** Per keypress when using - / + to zoom the timeline. */
+const KEYBOARD_ZOOM_FACTOR = 1.2;
 /** Matches .day-calendar__layout vertical padding (0.5rem + 0.75rem at 16px root). */
 const LAYOUT_PADDING_Y_PX = 20;
 const BASE_DAY_HEIGHT_PX = HOURS_PER_DAY * BASE_PX_PER_HOUR;
@@ -934,6 +936,10 @@ export class TimelineChartComponent {
       return;
     }
 
+    if (this.handleKeyboardZoom(event)) {
+      return;
+    }
+
     const nudgeDelta = this.nudgeKeyDelta(event.key);
     if (nudgeDelta !== null) {
       if (this.hasNudgeableSelection()) {
@@ -1658,6 +1664,35 @@ export class TimelineChartComponent {
       clearTimeout(this.pendingFirstGTimer);
       this.pendingFirstGTimer = null;
     }
+  }
+
+  private handleKeyboardZoom(event: KeyboardEvent): boolean {
+    const direction = this.keyboardZoomDirection(event);
+    if (direction === null) {
+      return false;
+    }
+
+    if (this.blocksKeyboardBlocked()) {
+      return false;
+    }
+
+    event.preventDefault();
+    const factor = direction === 'in' ? KEYBOARD_ZOOM_FACTOR : 1 / KEYBOARD_ZOOM_FACTOR;
+    this.applyZoomAtAnchor(this.zoomScale() * factor, this.getAnchorOffsetY());
+    return true;
+  }
+
+  private keyboardZoomDirection(event: KeyboardEvent): 'in' | 'out' | null {
+    if (event.ctrlKey || event.metaKey || event.altKey) {
+      return null;
+    }
+    if (event.key === '-' || event.key === '_') {
+      return 'out';
+    }
+    if (event.key === '+' || (event.key === '=' && event.shiftKey)) {
+      return 'in';
+    }
+    return null;
   }
 
   private scrollTimelineToEdge(edge: 'top' | 'bottom', event: KeyboardEvent): void {
