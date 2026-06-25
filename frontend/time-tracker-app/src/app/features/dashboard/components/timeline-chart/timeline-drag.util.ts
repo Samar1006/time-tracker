@@ -2,8 +2,8 @@ import { CreateEventPayload } from '../../../../core/services/timeline.service';
 import { TimelineBlock } from '../../../../core/models/timeline.model';
 import { localTimestamp } from '../../../../core/utils/voice-block.util';
 
-export const SNAP_MINUTES = 5;
-export const MIN_DURATION_MINUTES = 5;
+export const SNAP_MINUTES = 15;
+export const MIN_DURATION_MINUTES = 15;
 export const DEFAULT_CREATE_DURATION_MINUTES = 60;
 export const MINUTES_PER_DAY = 24 * 60;
 export const RESIZE_HANDLE_PX = 8;
@@ -47,7 +47,7 @@ export interface EventCreateDraft {
   };
 }
 
-/** Round to nearest 5-minute grid (9:07 → 9:05, 9:08 → 9:10). */
+/** Round to nearest 15-minute grid (9:07 → 9:00, 9:08 → 9:15). */
 export function snapMinutes(minutes: number): number {
   return Math.round(minutes / SNAP_MINUTES) * SNAP_MINUTES;
 }

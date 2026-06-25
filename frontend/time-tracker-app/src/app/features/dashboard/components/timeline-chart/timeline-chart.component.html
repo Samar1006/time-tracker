@@ -51,10 +51,6 @@
             </div>
           }
 
-          @if (!hasActivity()) {
-            <p class="day-calendar__empty">No activity logged for this day yet.</p>
-          }
-
           @for (positioned of renderBlocks(); track blockTrackKey(positioned)) {
             @if (blockIsEditable(positioned.block)) {
               <div

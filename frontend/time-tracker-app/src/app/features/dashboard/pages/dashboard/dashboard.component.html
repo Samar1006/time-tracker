@@ -4,7 +4,7 @@
   } @else if (error() && !displayTimeline()) {
     <p class="dashboard-status dashboard-status--error">{{ error() }}</p>
   } @else {
-    <div class="dashboard-timeline-wrap" [class.dashboard-timeline-wrap--refreshing]="loading()">
+    <div class="dashboard-timeline-wrap">
       <div class="dashboard-timeline-shell">
         <app-timeline-chart
           [hours]="dayHours()"
