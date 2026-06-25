@@ -21,6 +21,7 @@ import {
   CATEGORY_LEGEND
 } from '../../../../core/constants/categories';
 import { ActivityCategory, TimelineBlock, TimelineHour } from '../../../../core/models/timeline.model';
+import { TimelineKeyboardSettingsService } from '../../../../core/services/timeline-keyboard-settings.service';
 import { formatDuration, formatHourLabel } from '../../../../core/utils/duration.util';
 import { DayDateNavComponent } from '../../../../shared/components/day-date-nav/day-date-nav.component';
 import {
@@ -30,13 +31,16 @@ import {
   ActivityRenamePayload,
   EventCreateDraft,
   EventTimeChangePayload,
+  YankBuffer,
   RESIZE_HANDLE_PX,
   SNAP_MINUTES,
   buildCreateEventDraft,
   buildEventDayShiftPayload,
   buildEventRenamePatch,
   buildEventTimePatch,
+  buildPasteDraftsFromYank,
   buildRestorePayloadFromBlock,
+  buildYankBufferFromBlocks,
   shiftViewDate,
   visibleBlockIntervalMinutes,
   clampCreateDragInterval,
@@ -544,6 +548,9 @@ interface PendingBlockInteraction {
   styleUrl: './timeline-chart.component.scss'
 })
 export class TimelineChartComponent {
+  private readonly keyboardSettings = inject(TimelineKeyboardSettingsService);
+  readonly vimMotionsEnabled = this.keyboardSettings.vimMotionsEnabled;
+
   readonly hours = input.required<TimelineHour[]>();
   readonly date = input.required<string>();
   readonly timezone = input<string>('UTC');
@@ -553,6 +560,7 @@ export class TimelineChartComponent {
   readonly selectDate = output<string>();
   readonly eventTimeChange = output<EventTimeChangePayload>();
   readonly activityCreate = output<EventCreateDraft>();
+  readonly activitiesCreate = output<EventCreateDraft[]>();
   readonly activityRename = output<ActivityRenamePayload>();
   readonly blockDelete = output<BlockDeletePayload>();
   readonly blocksDelete = output<BlockDeletePayload[]>();
@@ -599,12 +607,28 @@ export class TimelineChartComponent {
   readonly createLabel = signal('');
   readonly renameLabel = signal('');
   readonly insertMode = signal(false);
+  readonly visualSelectMode = signal(false);
+  readonly yankFlashBlockKeys = signal<Set<string>>(new Set());
   readonly insertAnchorMin = signal<number | null>(null);
   readonly insertCursorMin = signal(0);
   readonly insertCursorTopPct = computed(
     () => (this.insertCursorMin() / MINUTES_PER_DAY) * 100
   );
   readonly insertCursorLabel = computed(() => this.formatCursorTime(this.insertCursorMin()));
+  readonly showInsertCursor = computed(() => {
+    if (this.insertMode()) {
+      return true;
+    }
+    if (this.visualSelectMode()) {
+      return false;
+    }
+    if (this.selectedBlockKeys().size === 0 && this.selectedEventIds().size === 0) {
+      return true;
+    }
+    return !this.getSelectedBlocks().some(
+      (block) => this.blockIsEditable(block) && block.eventId
+    );
+  });
   readonly insertGhostPreview = computed((): CreatePreview | null => {
     if (!this.insertMode()) {
       return null;
@@ -654,8 +678,15 @@ export class TimelineChartComponent {
   } | null = null;
   private pendingFirstGTimer: ReturnType<typeof setTimeout> | null = null;
   private pendingFirstDTimer: ReturnType<typeof setTimeout> | null = null;
+  private pendingFirstYTimer: ReturnType<typeof setTimeout> | null = null;
   private pendingFirstZTimer: ReturnType<typeof setTimeout> | null = null;
   private pendingMotionCount = '';
+  private yankBuffer: YankBuffer | null = null;
+  private yankFlashTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Fixed end of visual selection (where `v` was pressed). */
+  private visualSelectAnchorKey: string | null = null;
+  /** Moving end of visual selection; j/k shifts this toward/away from the anchor. */
+  private visualSelectHeadKey: string | null = null;
   private readonly boundScrollKeyUp = (event: KeyboardEvent) => {
     const key = event.key.toLowerCase();
     if (key !== 'j' && key !== 'k') {
@@ -761,6 +792,38 @@ export class TimelineChartComponent {
     });
 
     effect(() => {
+      if (this.keyboardSettings.vimMotionsEnabled()) {
+        return;
+      }
+      untracked(() => {
+        this.exitInsertMode();
+        this.cancelActivityRename();
+        this.cancelPendingFirstG();
+        this.cancelPendingFirstD();
+        this.cancelPendingFirstZ();
+        this.clearPendingMotionCount();
+      });
+    });
+
+    effect(() => {
+      if (!this.keyboardSettings.vimMotionsEnabled()) {
+        return;
+      }
+      const el = this.scrollContainer()?.nativeElement;
+      if (!el || this.cursorInitialized) {
+        return;
+      }
+      untracked(() => {
+        try {
+          this.setCursorToNowAndScroll(el);
+          this.cursorInitialized = true;
+        } catch {
+          // required inputs may not be ready yet
+        }
+      });
+    });
+
+    effect(() => {
       this.hours();
       if (!this.activeCreateDrag()) {
         this.createPreview.set(null);
@@ -851,7 +914,7 @@ export class TimelineChartComponent {
       el.addEventListener('scroll', onScroll, { passive: true });
       this.destroyRef.onDestroy(() => el.removeEventListener('scroll', onScroll));
 
-      if (!this.cursorInitialized) {
+      if (!this.cursorInitialized && this.keyboardSettings.vimMotionsEnabled()) {
         // First paint: set cursor to current time and scroll it into view.
         try {
           this.setCursorToNowAndScroll(el);
@@ -1052,9 +1115,18 @@ export class TimelineChartComponent {
     return this.isPositionedBlockSelected(positioned);
   }
 
+  isBlockYankFlashing(positioned: PositionedBlock): boolean {
+    return this.yankFlashBlockKeys().has(this.blockTrackKey(positioned));
+  }
+
   @HostListener('document:keydown', ['$event'])
   onDocumentKeydown(event: KeyboardEvent): void {
     if (this.isTypingInField()) {
+      return;
+    }
+
+    if (!this.keyboardSettings.vimMotionsEnabled()) {
+      this.handleStandardTimelineKeydown(event);
       return;
     }
 
@@ -1080,6 +1152,19 @@ export class TimelineChartComponent {
     }
 
     if (
+      normalizedKey === 'v' &&
+      !event.ctrlKey &&
+      !event.metaKey &&
+      !event.altKey
+    ) {
+      if (!this.blocksKeyboardBlocked() && !this.insertMode()) {
+        event.preventDefault();
+        this.toggleVisualSelectMode();
+      }
+      return;
+    }
+
+    if (
       normalizedKey === 'r' &&
       !event.ctrlKey &&
       !event.metaKey &&
@@ -1092,6 +1177,29 @@ export class TimelineChartComponent {
       return;
     }
 
+    if (
+      normalizedKey === 'y' &&
+      !event.ctrlKey &&
+      !event.metaKey &&
+      !event.altKey
+    ) {
+      if (this.handleYankKey(event)) {
+        return;
+      }
+    }
+
+    if (
+      normalizedKey === 'p' &&
+      !event.shiftKey &&
+      !event.ctrlKey &&
+      !event.metaKey &&
+      !event.altKey
+    ) {
+      if (this.handlePasteKey(event)) {
+        return;
+      }
+    }
+
     if (this.handleHalfPageScrollKey(event)) {
       return;
     }
@@ -1099,12 +1207,16 @@ export class TimelineChartComponent {
     // Allow moving the cursor line in normal mode without hijacking j/k scrolling:
     // In normal mode, the cursor follows scrolling (j/k scroll, trackpad scroll, etc.).
 
-    if (this.pendingFirstGTimer !== null && event.key !== 'g') {
+    if (this.pendingFirstGTimer !== null && event.key !== 'g' && event.key !== 'e') {
       this.cancelPendingFirstG();
     }
 
-    if (this.pendingFirstDTimer !== null && event.key !== 'd') {
+    if (this.pendingFirstDTimer !== null && event.key !== 'd' && !this.isDeleteOperatorMotionKey(event)) {
       this.cancelPendingFirstD();
+    }
+
+    if (this.pendingFirstYTimer !== null && event.key !== 'y') {
+      this.cancelPendingFirstY();
     }
 
     if (this.pendingFirstZTimer !== null && event.key !== 'z') {
@@ -1119,7 +1231,7 @@ export class TimelineChartComponent {
       this.pendingMotionCount &&
       !isModifierKey &&
       !this.isMotionCountDigit(event.key) &&
-      !this.isJKKey(event.key)
+      !this.preservesMotionCountKey(event)
     ) {
       this.clearPendingMotionCount();
     }
@@ -1131,6 +1243,11 @@ export class TimelineChartComponent {
       if (this.labelingRename()) {
         event.preventDefault();
         this.cancelActivityRename();
+        return;
+      }
+      if (this.visualSelectMode()) {
+        event.preventDefault();
+        this.exitVisualSelectMode(true);
         return;
       }
       this.clearPendingMotionCount();
@@ -1150,6 +1267,18 @@ export class TimelineChartComponent {
     }
 
     if (this.handleGoToScrollKey(event)) {
+      return;
+    }
+
+    if (this.handleDeleteOperatorMotionKey(event)) {
+      return;
+    }
+
+    if (this.handleGapNavigationKey(event)) {
+      return;
+    }
+
+    if (this.handleBlockMotionKey(event)) {
       return;
     }
 
@@ -1173,7 +1302,18 @@ export class TimelineChartComponent {
     if (nudgeDelta !== null) {
       const isJK = this.isJKKey(event.key);
       const consumed = isJK ? this.consumeMotionCount() : { count: 1, prefixed: false };
-      if (this.hasNudgeableSelection()) {
+      if (this.visualSelectMode() && isJK) {
+        event.preventDefault();
+        this.closeContextMenu();
+        this.hideTooltip();
+        const direction = nudgeDelta > 0 ? 1 : -1;
+        const count = consumed.prefixed ? consumed.count : 1;
+        for (let step = 0; step < count; step += 1) {
+          if (!this.moveVisualSelectHead(direction, event)) {
+            break;
+          }
+        }
+      } else if (this.hasNudgeableSelection() && !this.visualSelectMode()) {
         const hours = isJK ? Math.min(HOURS_PER_DAY, consumed.count) : 1;
         const deltaMin = isJK ? hours * MINUTES_PER_HOUR * (nudgeDelta > 0 ? 1 : -1) : nudgeDelta;
         this.nudgeSelectedBlocks(deltaMin, event, isJK);
@@ -1207,6 +1347,10 @@ export class TimelineChartComponent {
       return false;
     }
 
+    if (this.visualSelectMode()) {
+      return false;
+    }
+
     const el = this.scrollContainer()?.nativeElement;
     if (!el) {
       return false;
@@ -1219,6 +1363,12 @@ export class TimelineChartComponent {
 
     const direction = key === 'd' ? 1 : -1;
     const deltaMin = this.halfViewportMinutes(el) * direction;
+
+    if (this.hasNudgeableSelection()) {
+      this.nudgeSelectedBlocks(deltaMin, event, true);
+      return true;
+    }
+
     this.moveCursorByMinutes(deltaMin, 1, true);
     return true;
   }
@@ -1266,6 +1416,7 @@ export class TimelineChartComponent {
   }
 
   private enterInsertMode(): void {
+    this.exitVisualSelectMode(true);
     this.clearSelection();
     this.clearPendingMotionCount();
     this.insertAnchorMin.set(this.insertCursorMin());
@@ -1275,6 +1426,181 @@ export class TimelineChartComponent {
   private exitInsertMode(): void {
     this.insertMode.set(false);
     this.insertAnchorMin.set(null);
+  }
+
+  private toggleVisualSelectMode(): void {
+    this.closeContextMenu();
+    this.hideTooltip();
+    this.clearPendingMotionCount();
+    this.cancelPendingFirstG();
+    this.cancelPendingFirstD();
+    this.cancelPendingFirstZ();
+
+    if (this.visualSelectMode()) {
+      this.exitVisualSelectMode(false);
+      return;
+    }
+
+    this.clearSelection();
+    this.visualSelectMode.set(true);
+    const blocks = this.editablePositionedBlocks();
+    const positioned = this.findEditableBlockAtCursor();
+    if (positioned) {
+      const key = this.blockTrackKey(positioned);
+      this.visualSelectAnchorKey = key;
+      this.visualSelectHeadKey = key;
+      this.applyVisualSelectRange();
+      this.moveCursorToMinutes(this.blockMidpointMinutes(positioned));
+    } else if (blocks.length > 0) {
+      const index = this.nearestEditableBlockIndex(blocks, this.insertCursorMin());
+      const nearest = blocks[index];
+      const key = this.blockTrackKey(nearest);
+      this.visualSelectAnchorKey = key;
+      this.visualSelectHeadKey = key;
+      this.applyVisualSelectRange();
+      this.moveCursorToMinutes(this.blockMidpointMinutes(nearest));
+    } else {
+      this.visualSelectAnchorKey = null;
+      this.visualSelectHeadKey = null;
+    }
+  }
+
+  private exitVisualSelectMode(clearSelection: boolean): void {
+    this.visualSelectMode.set(false);
+    this.visualSelectAnchorKey = null;
+    this.visualSelectHeadKey = null;
+    if (clearSelection) {
+      this.clearSelection();
+    }
+  }
+
+  private nearestEditableBlockIndex(blocks: PositionedBlock[], cursorMin: number): number {
+    let bestIndex = 0;
+    let bestDistance = Number.POSITIVE_INFINITY;
+    for (let index = 0; index < blocks.length; index += 1) {
+      const distance = Math.abs(this.blockMidpointMinutes(blocks[index]) - cursorMin);
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        bestIndex = index;
+      }
+    }
+    return bestIndex;
+  }
+
+  private editableBlockIndexByKey(blocks: PositionedBlock[], key: string): number {
+    return blocks.findIndex((positioned) => this.blockTrackKey(positioned) === key);
+  }
+
+  private extendVisualSelectToBlockEdge(
+    edge: 'top' | 'bottom',
+    event: KeyboardEvent
+  ): void {
+    if (!this.visualSelectMode() || !this.visualSelectAnchorKey) {
+      return;
+    }
+
+    const blocks = this.editablePositionedBlocks();
+    if (blocks.length === 0) {
+      return;
+    }
+
+    event.preventDefault();
+    this.closeContextMenu();
+    this.hideTooltip();
+    this.clearPendingMotionCount();
+    this.cancelPendingFirstG();
+    this.cancelPendingFirstZ();
+
+    const target = edge === 'top' ? blocks[0] : blocks[blocks.length - 1];
+    this.visualSelectHeadKey = this.blockTrackKey(target);
+    this.applyVisualSelectRange();
+    this.moveCursorToMinutes(this.blockMidpointMinutes(target));
+  }
+
+  private applyVisualSelectRange(): void {
+    const blocks = this.editablePositionedBlocks();
+    const anchorKey = this.visualSelectAnchorKey;
+    const headKey = this.visualSelectHeadKey ?? anchorKey;
+    if (!anchorKey || !headKey || blocks.length === 0) {
+      return;
+    }
+
+    const anchorIndex = this.editableBlockIndexByKey(blocks, anchorKey);
+    const headIndex = this.editableBlockIndexByKey(blocks, headKey);
+    if (anchorIndex < 0 || headIndex < 0) {
+      return;
+    }
+
+    const lo = Math.min(anchorIndex, headIndex);
+    const hi = Math.max(anchorIndex, headIndex);
+    const keys = new Set<string>();
+    for (let index = lo; index <= hi; index += 1) {
+      keys.add(this.blockTrackKey(blocks[index]));
+    }
+    this.updateSelection(keys);
+  }
+
+  private moveVisualSelectHead(direction: 1 | -1, event: KeyboardEvent): boolean {
+    const blocks = this.editablePositionedBlocks();
+    const anchorKey = this.visualSelectAnchorKey;
+    if (blocks.length === 0 || !anchorKey) {
+      return false;
+    }
+
+    const headKey = this.visualSelectHeadKey ?? anchorKey;
+    let headIndex = this.editableBlockIndexByKey(blocks, headKey);
+    if (headIndex < 0) {
+      headIndex = this.editableBlockIndexByKey(blocks, anchorKey);
+    }
+    if (headIndex < 0) {
+      return false;
+    }
+
+    const nextIndex = headIndex + direction;
+    if (nextIndex < 0 || nextIndex >= blocks.length) {
+      return false;
+    }
+
+    event.preventDefault();
+    this.closeContextMenu();
+    this.hideTooltip();
+
+    this.visualSelectHeadKey = this.blockTrackKey(blocks[nextIndex]);
+    this.applyVisualSelectRange();
+    this.moveCursorToMinutes(this.blockMidpointMinutes(blocks[nextIndex]));
+    return true;
+  }
+
+  private editablePositionedBlocks(): PositionedBlock[] {
+    const viewDate = this.date();
+    const minutesOnView = (iso: string, vd: string) =>
+      minutesOnViewDate(iso, vd, this.timezone());
+
+    return this.renderBlocks()
+      .filter((positioned) => this.blockIsEditable(positioned.block) && positioned.block.eventId)
+      .sort((a, b) => {
+        const aInterval = visibleBlockIntervalMinutes(a.block, viewDate, minutesOnView);
+        const bInterval = visibleBlockIntervalMinutes(b.block, viewDate, minutesOnView);
+        if (aInterval.startMin !== bInterval.startMin) {
+          return aInterval.startMin - bInterval.startMin;
+        }
+        if (aInterval.endMin !== bInterval.endMin) {
+          return aInterval.endMin - bInterval.endMin;
+        }
+        return a.column - b.column;
+      });
+  }
+
+  private blockMidpointMinutes(positioned: PositionedBlock): number {
+    const viewDate = this.date();
+    const minutesOnView = (iso: string, vd: string) =>
+      minutesOnViewDate(iso, vd, this.timezone());
+    const { startMin, endMin } = visibleBlockIntervalMinutes(
+      positioned.block,
+      viewDate,
+      minutesOnView
+    );
+    return Math.round((startMin + endMin) / 2);
   }
 
   private confirmInsertGhost(): void {
@@ -1991,12 +2317,16 @@ export class TimelineChartComponent {
   }
 
   private clearSelection(): void {
+    this.visualSelectAnchorKey = null;
+    this.visualSelectHeadKey = null;
     if (this.selectedBlockKeys().size === 0 && this.selectedEventIds().size === 0) {
+      this.visualSelectMode.set(false);
       return;
     }
     this.selectedBlockKeys.set(new Set());
     this.selectedEventIds.set(new Set());
     this.pendingReselectTargetDate.set(null);
+    this.visualSelectMode.set(false);
     this.blocksSelectionChange.emit([]);
   }
 
@@ -2005,21 +2335,7 @@ export class TimelineChartComponent {
     if (!positioned) {
       return;
     }
-
-    const block = positioned.block;
-    const eventId = block.eventId;
-    if (!eventId) {
-      return;
-    }
-
-    event.preventDefault();
-    this.closeContextMenu();
-    this.hideTooltip();
-    this.blockDelete.emit({
-      eventId,
-      restore: buildRestorePayloadFromBlock(block, this.date())
-    });
-    this.clearSelection();
+    this.deleteEditableBlocks([positioned.block], event);
   }
 
   private findEditableBlockAtCursor(): PositionedBlock | null {
@@ -2303,6 +2619,49 @@ export class TimelineChartComponent {
     return normalized === 'j' || normalized === 'k';
   }
 
+  private isBlockMotionKey(key: string): boolean {
+    const normalized = key.toLowerCase();
+    return normalized === 'w' || normalized === 'b' || normalized === 'e';
+  }
+
+  /** Keys that may follow a numeric prefix (e.g. 3w, 3ge, 3dw). */
+  private preservesMotionCountKey(event: KeyboardEvent): boolean {
+    if (this.isJKKey(event.key) || this.isBlockMotionKey(event.key)) {
+      return true;
+    }
+    const normalized = event.key.toLowerCase();
+    if (normalized === 'g' && this.pendingMotionCount.length > 0) {
+      return true;
+    }
+    if (normalized === 'd' && this.pendingMotionCount.length > 0) {
+      return true;
+    }
+    if (this.pendingFirstDTimer !== null && this.isDeleteOperatorMotionKey(event)) {
+      return true;
+    }
+    return false;
+  }
+
+  private isDeleteOperatorMotionKey(event: KeyboardEvent): boolean {
+    if (event.ctrlKey || event.metaKey || event.altKey) {
+      return false;
+    }
+    const key = event.key.toLowerCase();
+    if (key === 'w' || key === 'b' || key === 'e' || key === 'j' || key === 'k' || key === 'g') {
+      return true;
+    }
+    if (event.key === 'G') {
+      return true;
+    }
+    if (event.key === '{' || event.key === '}') {
+      return true;
+    }
+    if (event.shiftKey && (event.code === 'BracketLeft' || event.code === 'BracketRight')) {
+      return true;
+    }
+    return false;
+  }
+
   private isMotionCountDigit(key: string): boolean {
     return /^[0-9]$/.test(key);
   }
@@ -2365,7 +2724,7 @@ export class TimelineChartComponent {
       return;
     }
 
-    if (this.hasNudgeableSelection()) {
+    if (this.hasNudgeableSelection() && !this.visualSelectMode()) {
       this.shiftSelectedBlocksDay(action === 'prev' ? -1 : 1, event);
       return;
     }
@@ -2440,11 +2799,361 @@ export class TimelineChartComponent {
     this.refreshSelectionKeysFromEventIds(eventIds);
   }
 
+  private moveCursorToMinutes(minutes: number): void {
+    this.insertCursorMin.set(this.snapCursorMinutes(minutes, 1));
+
+    const el = this.scrollContainer()?.nativeElement;
+    if (el) {
+      this.scrollToKeepCursorVisible(el);
+    }
+  }
+
+  private cursorMotionBlocked(): boolean {
+    return (
+      this.blocksKeyboardBlocked() ||
+      this.insertMode() ||
+      this.visualSelectMode() ||
+      this.hasNudgeableSelection()
+    );
+  }
+
+  private sortedVisibleBlockIntervals(): { startMin: number; endMin: number }[] {
+    const viewDate = this.date();
+    const minutesOnView = (iso: string, vd: string) =>
+      minutesOnViewDate(iso, vd, this.timezone());
+
+    return this.renderBlocks()
+      .map((positioned) =>
+        visibleBlockIntervalMinutes(positioned.block, viewDate, minutesOnView)
+      )
+      .filter((interval) => interval.endMin > interval.startMin + 0.01)
+      .sort((a, b) => a.startMin - b.startMin || a.endMin - b.endMin);
+  }
+
+  private blockIndexContainingCursor(
+    blocks: { startMin: number; endMin: number }[],
+    cursorMin: number
+  ): number {
+    for (let index = 0; index < blocks.length; index += 1) {
+      const block = blocks[index];
+      if (cursorMin >= block.startMin - 0.01 && cursorMin < block.endMin - 0.01) {
+        return index;
+      }
+    }
+    return -1;
+  }
+
+  private cursorBlockMotionTarget(
+    motion: 'w' | 'b' | 'e' | 'ge',
+    cursorMin = this.insertCursorMin()
+  ): number | null {
+    const blocks = this.sortedVisibleBlockIntervals();
+    if (blocks.length === 0) {
+      return null;
+    }
+
+    const containing = this.blockIndexContainingCursor(blocks, cursorMin);
+
+    switch (motion) {
+      case 'w': {
+        if (containing >= 0) {
+          const next = blocks[containing + 1];
+          return next ? Math.round(next.startMin) : null;
+        }
+        for (const block of blocks) {
+          if (block.startMin > cursorMin + 0.01) {
+            return Math.round(block.startMin);
+          }
+        }
+        return null;
+      }
+      case 'b': {
+        if (containing >= 0) {
+          const current = blocks[containing];
+          if (cursorMin > current.startMin + 0.01) {
+            return Math.round(current.startMin);
+          }
+        }
+        let previousStart: number | null = null;
+        for (const block of blocks) {
+          if (block.startMin >= cursorMin - 0.01) {
+            break;
+          }
+          previousStart = block.startMin;
+        }
+        return previousStart === null ? null : Math.round(previousStart);
+      }
+      case 'e': {
+        if (containing >= 0) {
+          const current = blocks[containing];
+          if (cursorMin < current.endMin - 0.01) {
+            return Math.round(current.endMin);
+          }
+        }
+        for (const block of blocks) {
+          if (block.endMin > cursorMin + 0.01) {
+            return Math.round(block.endMin);
+          }
+        }
+        return null;
+      }
+      case 'ge': {
+        if (containing >= 0) {
+          if (containing === 0) {
+            return null;
+          }
+          return Math.round(blocks[containing - 1].endMin);
+        }
+        let previousEnd: number | null = null;
+        for (const block of blocks) {
+          if (block.endMin <= cursorMin + 0.01) {
+            previousEnd = block.endMin;
+          } else {
+            break;
+          }
+        }
+        return previousEnd === null ? null : Math.round(previousEnd);
+      }
+    }
+  }
+
+  private runCursorBlockMotion(motion: 'w' | 'b' | 'e' | 'ge', event: KeyboardEvent): boolean {
+    if (this.cursorMotionBlocked()) {
+      return false;
+    }
+
+    event.preventDefault();
+    this.closeContextMenu();
+    this.hideTooltip();
+    this.clearPendingMotionCount();
+    this.cancelPendingFirstD();
+    this.cancelPendingFirstZ();
+
+    const consumed = this.consumeMotionCount();
+    const count = consumed.prefixed ? consumed.count : 1;
+    let cursor = this.insertCursorMin();
+
+    for (let step = 0; step < count; step += 1) {
+      const target = this.cursorBlockMotionTarget(motion);
+      if (target === null || target === cursor) {
+        break;
+      }
+      cursor = target;
+      this.insertCursorMin.set(cursor);
+    }
+
+    const el = this.scrollContainer()?.nativeElement;
+    if (el) {
+      this.scrollToKeepCursorVisible(el);
+    }
+    return true;
+  }
+
+  private handleBlockMotionKey(event: KeyboardEvent): boolean {
+    if (event.shiftKey || event.ctrlKey || event.metaKey || event.altKey) {
+      return false;
+    }
+
+    const key = event.key.toLowerCase();
+    if (key === 'w') {
+      this.cancelPendingFirstG();
+      return this.runCursorBlockMotion('w', event);
+    }
+    if (key === 'b') {
+      this.cancelPendingFirstG();
+      return this.runCursorBlockMotion('b', event);
+    }
+    if (key === 'e') {
+      if (this.pendingFirstGTimer !== null) {
+        this.cancelPendingFirstG();
+        this.cancelPendingFirstZ();
+        return this.runCursorBlockMotion('ge', event);
+      }
+      this.cancelPendingFirstG();
+      return this.runCursorBlockMotion('e', event);
+    }
+    return false;
+  }
+
+  private mergedBlockIntervalsMinutes(): { startMin: number; endMin: number }[] {
+    const viewDate = this.date();
+    const minutesOnView = (iso: string, vd: string) =>
+      minutesOnViewDate(iso, vd, this.timezone());
+    const intervals = this.renderBlocks()
+      .map((positioned) => visibleBlockIntervalMinutes(positioned.block, viewDate, minutesOnView))
+      .filter((interval) => interval.endMin > interval.startMin + 0.01)
+      .sort((a, b) => a.startMin - b.startMin || a.endMin - b.endMin);
+
+    const merged: { startMin: number; endMin: number }[] = [];
+    for (const interval of intervals) {
+      const last = merged.at(-1);
+      if (!last || interval.startMin > last.endMin + 0.01) {
+        merged.push({ startMin: interval.startMin, endMin: interval.endMin });
+      } else {
+        last.endMin = Math.max(last.endMin, interval.endMin);
+      }
+    }
+    return merged;
+  }
+
+  /** Start minute of each open gap between merged blocks (vim "paragraph" boundaries). */
+  private gapStartMinutes(): number[] {
+    const merged = this.mergedBlockIntervalsMinutes();
+    const gaps: number[] = [];
+    let occupiedEnd = 0;
+
+    for (const block of merged) {
+      if (block.startMin > occupiedEnd + 0.01) {
+        gaps.push(Math.round(occupiedEnd));
+      }
+      occupiedEnd = Math.max(occupiedEnd, block.endMin);
+    }
+
+    if (occupiedEnd < MINUTES_PER_DAY - 0.01) {
+      gaps.push(Math.round(occupiedEnd));
+    }
+
+    return gaps;
+  }
+
+  private gapIndexContaining(cursorMin: number): number {
+    const gaps = this.gapStartMinutes();
+    if (gaps.length === 0) {
+      return -1;
+    }
+
+    let containing = 0;
+    for (let index = 0; index < gaps.length; index += 1) {
+      if (gaps[index] <= cursorMin + 0.01) {
+        containing = index;
+      } else {
+        break;
+      }
+    }
+    return containing;
+  }
+
+  private previousGapStartMinutes(fromMin: number): number | null {
+    const gaps = this.gapStartMinutes();
+    if (gaps.length === 0) {
+      return null;
+    }
+
+    const currentIndex = this.gapIndexContaining(fromMin);
+    if (currentIndex < 0) {
+      return null;
+    }
+
+    if (currentIndex === 0) {
+      return fromMin > gaps[0] + 0.01 ? gaps[0] : null;
+    }
+
+    return gaps[currentIndex - 1];
+  }
+
+  private nextGapStartMinutes(fromMin: number): number | null {
+    const gaps = this.gapStartMinutes();
+    if (gaps.length === 0) {
+      return null;
+    }
+
+    const currentIndex = this.gapIndexContaining(fromMin);
+    if (currentIndex < 0 || currentIndex >= gaps.length - 1) {
+      return null;
+    }
+
+    const nextGap = gaps[currentIndex + 1];
+    if (nextGap <= fromMin + 0.01 && currentIndex + 2 < gaps.length) {
+      return gaps[currentIndex + 2];
+    }
+    return nextGap;
+  }
+
+  private gapNavigationDirection(event: KeyboardEvent): 'prev' | 'next' | null {
+    if (event.key === '{') {
+      return 'prev';
+    }
+    if (event.key === '}') {
+      return 'next';
+    }
+    // US layout: Shift+[ / Shift+] — event.key is still { / } but shiftKey is true.
+    if (event.shiftKey && event.code === 'BracketLeft') {
+      return 'prev';
+    }
+    if (event.shiftKey && event.code === 'BracketRight') {
+      return 'next';
+    }
+    return null;
+  }
+
+  private handleGapNavigationKey(event: KeyboardEvent): boolean {
+    const direction = this.gapNavigationDirection(event);
+    if (direction === null) {
+      return false;
+    }
+    if (event.ctrlKey || event.metaKey || event.altKey) {
+      return false;
+    }
+    if (this.blocksKeyboardBlocked() || this.insertMode()) {
+      return false;
+    }
+
+    event.preventDefault();
+    this.closeContextMenu();
+    this.hideTooltip();
+    this.clearPendingMotionCount();
+    this.cancelPendingFirstG();
+    this.cancelPendingFirstD();
+    this.cancelPendingFirstZ();
+
+    const cursor = this.insertCursorMin();
+    const target =
+      direction === 'prev'
+        ? this.previousGapStartMinutes(cursor)
+        : this.nextGapStartMinutes(cursor);
+
+    if (target !== null && target !== cursor) {
+      this.moveCursorToMinutes(target);
+    }
+    return true;
+  }
+
   private handleGoToScrollKey(event: KeyboardEvent): boolean {
+    if (this.pendingFirstDTimer !== null && !this.deleteOperatorBlocked()) {
+      if (event.key === 'G') {
+        event.preventDefault();
+        this.executeDeleteMotion('G', event);
+        return true;
+      }
+
+      if (
+        event.key === 'g' &&
+        !event.shiftKey &&
+        !event.ctrlKey &&
+        !event.metaKey &&
+        !event.altKey
+      ) {
+        event.preventDefault();
+        if (event.repeat) {
+          return true;
+        }
+        if (this.pendingFirstGTimer !== null) {
+          this.executeDeleteMotion('gg', event);
+          return true;
+        }
+        this.pendingFirstGTimer = setTimeout(() => {
+          this.pendingFirstGTimer = null;
+        }, GG_SEQUENCE_MS);
+        return true;
+      }
+    }
+
     if (event.key === 'G') {
       this.cancelPendingFirstG();
       this.cancelPendingFirstZ();
-      if (this.hasNudgeableSelection()) {
+      if (this.visualSelectMode()) {
+        this.extendVisualSelectToBlockEdge('bottom', event);
+      } else if (this.hasNudgeableSelection() && !this.visualSelectMode()) {
         this.moveSelectedBlocksToEdge('bottom', event);
       } else {
         // No selection: jump cursor to end of day.
@@ -2478,7 +3187,9 @@ export class TimelineChartComponent {
     if (this.pendingFirstGTimer !== null) {
       this.cancelPendingFirstG();
       this.cancelPendingFirstZ();
-      if (this.hasNudgeableSelection()) {
+      if (this.visualSelectMode()) {
+        this.extendVisualSelectToBlockEdge('top', event);
+      } else if (this.hasNudgeableSelection() && !this.visualSelectMode()) {
         this.moveSelectedBlocksToEdge('top', event);
       } else {
         // No selection: jump cursor to start of day.
@@ -2500,11 +3211,256 @@ export class TimelineChartComponent {
     return true;
   }
 
-  private handleDeleteAtCursorKey(event: KeyboardEvent): boolean {
-    if (event.key !== 'd' || event.shiftKey || event.ctrlKey || event.metaKey || event.altKey) {
+  private deleteOperatorBlocked(): boolean {
+    return (
+      this.blocksKeyboardBlocked() ||
+      this.insertMode() ||
+      this.visualSelectMode() ||
+      this.hasNudgeableSelection()
+    );
+  }
+
+  private handleDeleteOperatorMotionKey(event: KeyboardEvent): boolean {
+    if (this.pendingFirstDTimer === null || this.deleteOperatorBlocked()) {
       return false;
     }
 
+    const motion = this.deleteOperatorMotionFromKey(event);
+    if (motion === null) {
+      return false;
+    }
+
+    event.preventDefault();
+    if (event.repeat) {
+      return true;
+    }
+
+    this.executeDeleteMotion(motion, event);
+    return true;
+  }
+
+  private deleteOperatorMotionFromKey(
+    event: KeyboardEvent
+  ): 'w' | 'b' | 'e' | 'j' | 'k' | '{' | '}' | null {
+    if (event.ctrlKey || event.metaKey || event.altKey) {
+      return null;
+    }
+
+    if (event.key === '{') {
+      return '{';
+    }
+    if (event.key === '}') {
+      return '}';
+    }
+    if (event.shiftKey && event.code === 'BracketLeft') {
+      return '{';
+    }
+    if (event.shiftKey && event.code === 'BracketRight') {
+      return '}';
+    }
+
+    const key = event.key.toLowerCase();
+    if (key === 'w' || key === 'b' || key === 'e' || key === 'j' || key === 'k') {
+      return key;
+    }
+    return null;
+  }
+
+  private executeDeleteMotion(
+    motion: 'w' | 'b' | 'e' | 'j' | 'k' | '{' | '}' | 'gg' | 'G',
+    event: KeyboardEvent
+  ): void {
+    this.cancelPendingFirstD();
+    this.cancelPendingFirstG();
+    this.cancelPendingFirstY();
+    this.cancelPendingFirstZ();
+    this.closeContextMenu();
+    this.hideTooltip();
+
+    const consumed = this.consumeMotionCount();
+    const count = consumed.prefixed ? consumed.count : 1;
+    const blocks = this.blocksForDeleteMotion(motion, count, consumed.prefixed);
+    if (blocks.length === 0) {
+      return;
+    }
+
+    this.deleteEditableBlocks(blocks, event);
+  }
+
+  private blocksForDeleteMotion(
+    motion: 'w' | 'b' | 'e' | 'j' | 'k' | '{' | '}' | 'gg' | 'G',
+    count: number,
+    prefixed: boolean
+  ): TimelineBlock[] {
+    const startMin = this.insertCursorMin();
+
+    switch (motion) {
+      case 'w': {
+        const endMin = this.advanceBlockMotionTarget('w', startMin, count);
+        return endMin === null ? [] : this.editableBlocksInOpenRange(startMin, endMin);
+      }
+      case 'b': {
+        const endMin = this.advanceBlockMotionTarget('b', startMin, count);
+        return endMin === null ? [] : this.editableBlocksInOpenRange(endMin, startMin);
+      }
+      case 'e': {
+        const endMin = this.advanceBlockMotionTarget('e', startMin, count);
+        return endMin === null ? [] : this.editableBlocksInOpenRange(startMin, endMin);
+      }
+      case '{': {
+        const endMin = this.previousGapStartMinutes(startMin);
+        return endMin === null ? [] : this.editableBlocksInOpenRange(endMin, startMin);
+      }
+      case '}': {
+        const endMin = this.nextGapStartMinutes(startMin);
+        return endMin === null ? [] : this.editableBlocksInOpenRange(startMin, endMin);
+      }
+      case 'gg':
+        return this.editableBlocksInOpenRange(0, startMin);
+      case 'G':
+        return this.editableBlocksInOpenRange(startMin, MINUTES_PER_DAY);
+      case 'j':
+        return this.editableBlocksForVerticalDelete(startMin, count, 1, prefixed);
+      case 'k':
+        return this.editableBlocksForVerticalDelete(startMin, count, -1, prefixed);
+    }
+  }
+
+  private advanceBlockMotionTarget(
+    motion: 'w' | 'b' | 'e',
+    startMin: number,
+    count: number
+  ): number | null {
+    let cursor = startMin;
+    let moved = false;
+    for (let step = 0; step < count; step += 1) {
+      const target = this.cursorBlockMotionTarget(motion, cursor);
+      if (target === null || target === cursor) {
+        break;
+      }
+      cursor = target;
+      moved = true;
+    }
+    return moved ? cursor : null;
+  }
+
+  private editableBlocksInOpenRange(lo: number, hi: number): TimelineBlock[] {
+    const rangeLo = Math.min(lo, hi);
+    const rangeHi = Math.max(lo, hi);
+    if (rangeHi <= rangeLo + 0.01) {
+      return [];
+    }
+
+    const viewDate = this.date();
+    const minutesOnView = (iso: string, vd: string) =>
+      minutesOnViewDate(iso, vd, this.timezone());
+    const seen = new Set<string>();
+    const blocks: TimelineBlock[] = [];
+
+    for (const positioned of this.renderBlocks()) {
+      const block = positioned.block;
+      const eventId = block.eventId;
+      if (!this.blockIsEditable(block) || !eventId || seen.has(eventId)) {
+        continue;
+      }
+
+      const { startMin, endMin } = visibleBlockIntervalMinutes(block, viewDate, minutesOnView);
+      if (startMin >= rangeHi - 0.01 || endMin <= rangeLo + 0.01) {
+        continue;
+      }
+
+      seen.add(eventId);
+      blocks.push(block);
+    }
+
+    return blocks;
+  }
+
+  private editableBlocksForVerticalDelete(
+    startMin: number,
+    count: number,
+    direction: 1 | -1,
+    prefixed: boolean
+  ): TimelineBlock[] {
+    const ordered = this.editablePositionedBlocks();
+    if (ordered.length === 0) {
+      return [];
+    }
+
+    const viewDate = this.date();
+    const minutesOnView = (iso: string, vd: string) =>
+      minutesOnViewDate(iso, vd, this.timezone());
+
+    let anchorIndex = ordered.findIndex((positioned) => {
+      const { startMin: blockStart, endMin } = visibleBlockIntervalMinutes(
+        positioned.block,
+        viewDate,
+        minutesOnView
+      );
+      return startMin >= blockStart - 0.01 && startMin < endMin - 0.01;
+    });
+
+    if (anchorIndex < 0) {
+      anchorIndex = this.nearestEditableBlockIndex(ordered, startMin);
+    }
+
+    const total = prefixed ? count : Math.max(2, count);
+    const indices = new Set<number>();
+    for (let step = 0; step < total; step += 1) {
+      const index = anchorIndex + step * direction;
+      if (index < 0 || index >= ordered.length) {
+        break;
+      }
+      indices.add(index);
+    }
+
+    return [...indices]
+      .sort((a, b) => a - b)
+      .map((index) => ordered[index].block);
+  }
+
+  private deleteEditableBlocks(blocks: TimelineBlock[], event: KeyboardEvent): void {
+    if (blocks.length === 0) {
+      return;
+    }
+
+    event.preventDefault();
+    this.closeContextMenu();
+    this.hideTooltip();
+
+    const viewDate = this.date();
+    const payloads = blocks.map((block) => ({
+      eventId: block.eventId!,
+      restore: buildRestorePayloadFromBlock(block, viewDate)
+    }));
+
+    if (payloads.length === 1) {
+      this.blockDelete.emit(payloads[0]);
+    } else {
+      this.blocksDelete.emit(payloads);
+    }
+    this.clearSelection();
+  }
+
+  private handleStandardTimelineKeydown(event: KeyboardEvent): void {
+    if (event.key === 'Escape') {
+      if (this.contextMenu() || this.labelingCreate() || this.labelingRename()) {
+        return;
+      }
+      this.clearPendingMotionCount();
+      this.clearSelection();
+      return;
+    }
+
+    if (event.key === 'Backspace') {
+      this.deleteSelectedBlocks(event);
+    }
+  }
+
+  private handleYankKey(event: KeyboardEvent): boolean {
+    if (event.key.toLowerCase() !== 'y') {
+      return false;
+    }
     if (this.blocksKeyboardBlocked() || this.insertMode()) {
       return false;
     }
@@ -2515,12 +3471,173 @@ export class TimelineChartComponent {
       return true;
     }
 
-    if (this.pendingFirstDTimer !== null) {
+    if (this.visualSelectMode() || this.hasNudgeableSelection()) {
+      this.cancelPendingFirstG();
       this.cancelPendingFirstD();
+      this.cancelPendingFirstY();
+      this.cancelPendingFirstZ();
+      this.clearPendingMotionCount();
+      this.closeContextMenu();
+      this.hideTooltip();
+      this.yankSelectionAndReturnToNormal();
+      return true;
+    }
+
+    if (this.pendingFirstYTimer !== null) {
+      this.cancelPendingFirstY();
+      this.cancelPendingFirstG();
+      this.cancelPendingFirstD();
+      this.cancelPendingFirstZ();
+      this.clearPendingMotionCount();
+      this.yankBlockAtCursor();
+      return true;
+    }
+
+    this.pendingFirstYTimer = setTimeout(() => {
+      this.pendingFirstYTimer = null;
+    }, DD_SEQUENCE_MS);
+    return true;
+  }
+
+  private handlePasteKey(event: KeyboardEvent): boolean {
+    if (event.key.toLowerCase() !== 'p') {
+      return false;
+    }
+    if (this.pasteBlocked()) {
+      return false;
+    }
+    if (!this.yankBuffer?.blocks.length) {
+      return false;
+    }
+
+    event.preventDefault();
+    this.closeContextMenu();
+    this.hideTooltip();
+    this.clearPendingMotionCount();
+    this.cancelPendingFirstG();
+    this.cancelPendingFirstD();
+    this.cancelPendingFirstY();
+    this.cancelPendingFirstZ();
+
+    const drafts = buildPasteDraftsFromYank(
+      this.yankBuffer,
+      this.date(),
+      this.insertCursorMin()
+    );
+    if (drafts.length > 0) {
+      this.activitiesCreate.emit(drafts);
+    }
+    return true;
+  }
+
+  private pasteBlocked(): boolean {
+    return (
+      this.blocksKeyboardBlocked() ||
+      this.insertMode() ||
+      this.visualSelectMode() ||
+      this.hasNudgeableSelection() ||
+      this.createBusy()
+    );
+  }
+
+  private yankSelectionAndReturnToNormal(): void {
+    const blocks = this.getSelectedBlocks().filter(
+      (block) => this.blockIsEditable(block) && block.eventId
+    );
+    if (blocks.length > 0) {
+      this.storeYankBuffer(blocks);
+    }
+    this.exitVisualSelectMode(true);
+  }
+
+  private yankBlockAtCursor(): void {
+    const positioned = this.findEditableBlockAtCursor();
+    if (!positioned) {
+      return;
+    }
+    this.storeYankBuffer([positioned.block]);
+  }
+
+  private storeYankBuffer(blocks: TimelineBlock[]): void {
+    const viewDate = this.date();
+    const minutesOnView = (iso: string, vd: string) =>
+      minutesOnViewDate(iso, vd, this.timezone());
+    const buffer = buildYankBufferFromBlocks(blocks, viewDate, minutesOnView);
+    if (buffer) {
+      this.yankBuffer = buffer;
+      this.flashYankedBlocks(blocks);
+    }
+  }
+
+  private flashYankedBlocks(blocks: TimelineBlock[]): void {
+    const eventIds = new Set(
+      blocks.map((block) => block.eventId).filter((id): id is string => Boolean(id))
+    );
+    const keys = new Set<string>();
+    for (const positioned of this.renderBlocks()) {
+      const eventId = positioned.block.eventId;
+      if (eventId && eventIds.has(eventId)) {
+        keys.add(this.blockTrackKey(positioned));
+      }
+    }
+    if (keys.size === 0) {
+      return;
+    }
+
+    this.yankFlashBlockKeys.set(keys);
+    if (this.yankFlashTimer !== null) {
+      clearTimeout(this.yankFlashTimer);
+    }
+    this.yankFlashTimer = setTimeout(() => {
+      this.yankFlashBlockKeys.set(new Set());
+      this.yankFlashTimer = null;
+    }, 480);
+  }
+
+  private handleDeleteAtCursorKey(event: KeyboardEvent): boolean {
+    const key = event.key.toLowerCase();
+    if (key !== 'd' && key !== 'x') {
+      return false;
+    }
+    if (event.shiftKey || event.ctrlKey || event.metaKey || event.altKey) {
+      return false;
+    }
+
+    if (this.blocksKeyboardBlocked() || this.insertMode() || this.visualSelectMode()) {
+      return false;
+    }
+
+    event.preventDefault();
+
+    if (event.repeat) {
+      return true;
+    }
+
+    if (key === 'x') {
+      this.cancelPendingFirstD();
+      this.cancelPendingFirstY();
       this.cancelPendingFirstG();
       this.cancelPendingFirstZ();
       this.clearPendingMotionCount();
-      this.deleteBlockAtCursor(event);
+      if (this.hasNudgeableSelection()) {
+        this.deleteSelectedBlocks(event);
+      } else {
+        this.deleteBlockAtCursor(event);
+      }
+      return true;
+    }
+
+    if (this.pendingFirstDTimer !== null) {
+      this.cancelPendingFirstD();
+      this.cancelPendingFirstY();
+      this.cancelPendingFirstG();
+      this.cancelPendingFirstZ();
+      this.clearPendingMotionCount();
+      if (this.hasNudgeableSelection()) {
+        this.deleteSelectedBlocks(event);
+      } else {
+        this.deleteBlockAtCursor(event);
+      }
       return true;
     }
 
@@ -2575,6 +3692,13 @@ export class TimelineChartComponent {
     if (this.pendingFirstDTimer !== null) {
       clearTimeout(this.pendingFirstDTimer);
       this.pendingFirstDTimer = null;
+    }
+  }
+
+  private cancelPendingFirstY(): void {
+    if (this.pendingFirstYTimer !== null) {
+      clearTimeout(this.pendingFirstYTimer);
+      this.pendingFirstYTimer = null;
     }
   }
 

@@ -17,6 +17,7 @@ import { toObservable, toSignal } from '@angular/core/rxjs-interop';
 import { AuthService } from '../../../../core/services/auth.service';
 import { TimelineService, CreateEventPayload } from '../../../../core/services/timeline.service';
 import { TimelineUndoService } from '../../../../core/services/timeline-undo.service';
+import { TimelineKeyboardSettingsService } from '../../../../core/services/timeline-keyboard-settings.service';
 import { VoiceLogService } from '../../../../core/services/voice-log.service';
 import { AppShellComponent } from '../../../../shared/layouts/app-shell/app-shell.component';
 import { TimelineChartComponent } from '../../components/timeline-chart/timeline-chart.component';
@@ -56,6 +57,7 @@ const REFRESH_MS = 60_000;
 export class DashboardComponent {
   readonly auth = inject(AuthService);
   private readonly timelineService = inject(TimelineService);
+  private readonly keyboardSettings = inject(TimelineKeyboardSettingsService);
   readonly undoService = inject(TimelineUndoService);
   readonly voiceLog = inject(VoiceLogService);
 
@@ -177,15 +179,22 @@ export class DashboardComponent {
     }
 
     const mod = event.metaKey || event.ctrlKey;
-    if (!mod || (event.key !== 'z' && event.key !== 'Z')) {
+
+    if (mod && (event.key === 'z' || event.key === 'Z')) {
+      event.preventDefault();
+      if (event.shiftKey) {
+        void this.performRedo();
+      } else {
+        void this.performUndo();
+      }
       return;
     }
 
-    event.preventDefault();
-
-    if (event.shiftKey) {
-      void this.performRedo();
-    } else {
+    if (event.key === 'u' && !mod && !event.altKey && !event.shiftKey) {
+      if (!this.keyboardSettings.vimMotionsEnabled()) {
+        return;
+      }
+      event.preventDefault();
       void this.performUndo();
     }
   }
@@ -452,6 +461,92 @@ export class DashboardComponent {
       });
   }
 
+  onActivitiesCreate(drafts: EventCreateDraft[]): void {
+    if (drafts.length === 0) {
+      return;
+    }
+
+    const viewDate = this.selectedDate();
+    this.patchError.set(null);
+    this.createBusy.set(true);
+
+    const pendingIds = drafts.map((_, index) => `pending-paste-${Date.now()}-${index}`);
+    const timeline = this.displayTimeline();
+    if (timeline) {
+      let updated = timeline;
+      for (let index = 0; index < drafts.length; index += 1) {
+        updated = applyEventCreateToTimeline(updated, drafts[index], pendingIds[index]);
+      }
+      this.setTimelineCache(viewDate, updated);
+    }
+
+    forkJoin(drafts.map((draft) => this.timelineService.createEvent(draft))).subscribe({
+      next: (responses) => {
+        const createdIds = responses
+          .flatMap((response) => response.ids)
+          .filter((id): id is string => Boolean(id));
+        if (createdIds.length === 0) {
+          return;
+        }
+
+        const current = this.displayTimeline();
+        if (current) {
+          let updated = current;
+          for (let index = 0; index < drafts.length; index += 1) {
+            updated = removeEventFromTimeline(updated, pendingIds[index]);
+          }
+          for (let index = 0; index < drafts.length; index += 1) {
+            const createdId = createdIds[index];
+            if (createdId) {
+              updated = applyEventCreateToTimeline(updated, drafts[index], createdId);
+            }
+          }
+          this.setTimelineCache(viewDate, updated);
+        }
+
+        const label =
+          drafts.length === 1 ? 'Paste block' : `Paste ${drafts.length} blocks`;
+        let currentIds = [...createdIds];
+
+        this.undoService.record({
+          label,
+          viewDate,
+          undo: async () => {
+            for (const eventId of currentIds) {
+              await this.deleteEventForUndo(eventId, viewDate);
+            }
+          },
+          redo: async () => {
+            currentIds = [];
+            for (const draft of drafts) {
+              const res = await this.createEventForUndo(draft);
+              const id = res.ids[0];
+              if (id) {
+                currentIds.push(id);
+              }
+            }
+          }
+        });
+      },
+      error: () => {
+        const current = this.displayTimeline();
+        if (current) {
+          let updated = current;
+          for (const pendingId of pendingIds) {
+            updated = removeEventFromTimeline(updated, pendingId);
+          }
+          this.setTimelineCache(viewDate, updated);
+        }
+        this.patchError.set(
+          drafts.length === 1
+            ? 'Could not paste activity. Try again.'
+            : 'Could not paste activities. Try again.'
+        );
+      },
+      complete: () => this.createBusy.set(false)
+    });
+  }
+
   onSelectionChange(blocks: TimelineBlock[]): void {
     const ids = blocks
       .map((block) => block.eventId)
@@ -476,11 +571,25 @@ export class DashboardComponent {
     this.patchError.set(null);
     this.softRefresh.set(true);
 
+    const eventIds = payloads.map((payload) => payload.eventId);
+    const eventIdSet = new Set(eventIds);
+
+    this.preservedSelectionIds.update((ids) => ids.filter((id) => !eventIdSet.has(id)));
+
+    const snapshot = this.displayTimeline();
+    if (snapshot) {
+      let updated = snapshot;
+      for (const eventId of eventIds) {
+        updated = removeEventFromTimeline(updated, eventId);
+      }
+      this.setTimelineCache(viewDate, updated);
+    }
+
     forkJoin(
       payloads.map((payload) => this.timelineService.deleteEvent(payload.eventId, viewDate))
     ).subscribe({
       next: () => {
-        this.reloadTick.update((n) => n + 1);
+        this.softRefresh.set(false);
 
         const restores = payloads.map((payload) => payload.restore);
         const restoredIds: string[] = [];
@@ -508,6 +617,17 @@ export class DashboardComponent {
         });
       },
       error: () => {
+        if (snapshot) {
+          let restored = snapshot;
+          for (const payload of payloads) {
+            restored = applyEventCreateToTimeline(
+              restored,
+              this.restorePayloadToDraft(payload.restore, viewDate),
+              payload.eventId
+            );
+          }
+          this.setTimelineCache(viewDate, restored);
+        }
         this.softRefresh.set(false);
         this.patchError.set(
           payloads.length === 1
@@ -635,6 +755,28 @@ export class DashboardComponent {
         metadata: patch.metadata
       })
     ).then(() => undefined);
+  }
+
+  private restorePayloadToDraft(
+    restore: CreateEventPayload,
+    viewDate: string
+  ): EventCreateDraft {
+    const meta = restore.metadata ?? {};
+    return {
+      timestamp: restore.timestamp,
+      type: 'manual',
+      title: restore.title,
+      durationSec: restore.durationSec,
+      metadata: {
+        category: String(meta['category'] ?? 'uncategorized'),
+        sourceClient: String(meta['sourceClient'] ?? 'dashboard-undo'),
+        localDate: String(meta['localDate'] ?? viewDate),
+        ...(typeof meta['confidence'] === 'number' ? { confidence: meta['confidence'] } : {}),
+        ...(typeof meta['endLocalDate'] === 'string'
+          ? { endLocalDate: meta['endLocalDate'] }
+          : {})
+      }
+    };
   }
 
   private deleteEventForUndo(eventId: string, viewDate: string): Promise<void> {

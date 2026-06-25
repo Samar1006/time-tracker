@@ -65,6 +65,7 @@
                 [class.day-calendar__event--continues-next-day]="blockContinuesNextDay(positioned.block)"
                 [class.day-calendar__event--continues-prev-day]="blockContinuesFromPrevDay(positioned.block)"
                 [class.day-calendar__event--selected]="isBlockSelected(positioned)"
+                [class.day-calendar__event--yank-flash]="isBlockYankFlashing(positioned)"
                 [class.day-calendar__event--drag-source]="isDraggingBlock(positioned)"
                 [attr.aria-selected]="isBlockSelected(positioned)"
                 (pointerdown)="onBlockPointerDown($event, positioned)"
@@ -107,6 +108,7 @@
                 [class.day-calendar__event--continues-next-day]="blockContinuesNextDay(positioned.block)"
                 [class.day-calendar__event--continues-prev-day]="blockContinuesFromPrevDay(positioned.block)"
                 [class.day-calendar__event--selected]="isBlockSelected(positioned)"
+                [class.day-calendar__event--yank-flash]="isBlockYankFlashing(positioned)"
                 [attr.aria-selected]="isBlockSelected(positioned)"
                 (pointerdown)="onBlockPointerDown($event, positioned)"
                 (mouseenter)="showBlockTooltip(positioned, $event)"
@@ -231,19 +233,21 @@
             </div>
           }
 
-          <div
-            class="day-calendar__insert-cursor"
-            [class.day-calendar__insert-cursor--active]="insertMode()"
-            [style.top.%]="insertCursorTopPct()"
-            [attr.aria-label]="'Cursor at ' + insertCursorLabel()"
-          >
-            <span
-              class="day-calendar__insert-cursor-label"
-              [class.day-calendar__insert-cursor-label--active]="insertMode()"
+          @if (vimMotionsEnabled() && showInsertCursor()) {
+            <div
+              class="day-calendar__insert-cursor"
+              [class.day-calendar__insert-cursor--active]="insertMode()"
+              [style.top.%]="insertCursorTopPct()"
+              [attr.aria-label]="'Cursor at ' + insertCursorLabel()"
             >
-              {{ insertCursorLabel() }}
-            </span>
-          </div>
+              <span
+                class="day-calendar__insert-cursor-label"
+                [class.day-calendar__insert-cursor-label--active]="insertMode()"
+              >
+                {{ insertCursorLabel() }}
+              </span>
+            </div>
+          }
         </div>
       </div>
     </div>
