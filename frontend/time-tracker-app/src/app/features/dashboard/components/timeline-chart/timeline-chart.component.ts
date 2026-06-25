@@ -1105,8 +1105,10 @@ export class TimelineChartComponent {
       return;
     }
 
-    const deletableIds = this.getSelectedEditableEventIds();
-    if (deletableIds.length === 0) {
+    const deletable = this.getSelectedBlocks().filter(
+      (block) => this.blockIsEditable(block) && block.eventId
+    );
+    if (deletable.length === 0) {
       return;
     }
 
@@ -1114,8 +1116,13 @@ export class TimelineChartComponent {
     this.closeContextMenu();
     this.hideTooltip();
 
-    for (const eventId of deletableIds) {
-      this.blockDelete.emit(eventId);
+    const viewDate = this.date();
+    for (const block of deletable) {
+      const eventId = block.eventId!;
+      this.blockDelete.emit({
+        eventId,
+        restore: buildRestorePayloadFromBlock(block, viewDate)
+      });
     }
     this.clearSelection();
   }
@@ -1148,14 +1155,21 @@ export class TimelineChartComponent {
       }
 
       try {
-        const patch = buildEventTimePatch(
+        const previous = buildEventTimePatch(
+          block,
+          this.date(),
+          interval.startMin,
+          interval.endMin,
+          minutesOnView
+        );
+        const next = buildEventTimePatch(
           block,
           this.date(),
           clamped.startMin,
           clamped.endMin,
           minutesOnView
         );
-        this.eventTimeChange.emit(patch);
+        this.eventTimeChange.emit({ label: 'Move block', previous, next });
         moved += 1;
       } catch {
         // skip block
