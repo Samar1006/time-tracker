@@ -1518,6 +1518,61 @@ export class TimelineChartComponent {
     }
   }
 
+  private moveSelectedBlocksToEdge(edge: 'top' | 'bottom', event: KeyboardEvent): void {
+    if (this.blocksKeyboardBlocked() || !this.hasNudgeableSelection()) {
+      return;
+    }
+
+    const blocks = this.getSelectedBlocks().filter(
+      (block) => this.blockIsEditable(block) && block.eventId
+    );
+    if (blocks.length === 0) {
+      return;
+    }
+
+    event.preventDefault();
+    this.closeContextMenu();
+    this.hideTooltip();
+
+    const minutesOnView = (iso: string, viewDate: string) =>
+      minutesOnViewDate(iso, viewDate, this.timezone());
+
+    for (const block of blocks) {
+      const interval = visibleBlockIntervalMinutes(block, this.date(), minutesOnView);
+      const durationMin = interval.endMin - interval.startMin;
+      const target =
+        edge === 'top'
+          ? clampIntervalToDay(0, durationMin)
+          : clampIntervalToDay(MINUTES_PER_DAY - durationMin, MINUTES_PER_DAY);
+
+      if (target.startMin === interval.startMin && target.endMin === interval.endMin) {
+        continue;
+      }
+
+      try {
+        const previous = buildEventTimePatch(
+          block,
+          this.date(),
+          interval.startMin,
+          interval.endMin,
+          minutesOnView
+        );
+        const next = buildEventTimePatch(
+          block,
+          this.date(),
+          target.startMin,
+          target.endMin,
+          minutesOnView
+        );
+        this.eventTimeChange.emit({ label: 'Move block', previous, next });
+      } catch {
+        // skip block
+      }
+    }
+
+    this.scrollTimelineToEdge(edge);
+  }
+
   private nudgeKeyDelta(key: string): number | null {
     if (key === 'ArrowDown' || key.toLowerCase() === 'j') {
       return SNAP_MINUTES;
@@ -1623,7 +1678,11 @@ export class TimelineChartComponent {
   private handleGoToScrollKey(event: KeyboardEvent): boolean {
     if (event.key === 'G') {
       this.cancelPendingFirstG();
-      this.scrollTimelineToEdge('bottom', event);
+      if (this.hasNudgeableSelection()) {
+        this.moveSelectedBlocksToEdge('bottom', event);
+      } else {
+        this.scrollTimelineToEdge('bottom', event);
+      }
       return true;
     }
 
@@ -1643,7 +1702,11 @@ export class TimelineChartComponent {
 
     if (this.pendingFirstGTimer !== null) {
       this.cancelPendingFirstG();
-      this.scrollTimelineToEdge('top', event);
+      if (this.hasNudgeableSelection()) {
+        this.moveSelectedBlocksToEdge('top', event);
+      } else {
+        this.scrollTimelineToEdge('top', event);
+      }
       return true;
     }
 
@@ -1660,7 +1723,7 @@ export class TimelineChartComponent {
     }
   }
 
-  private scrollTimelineToEdge(edge: 'top' | 'bottom', event: KeyboardEvent): void {
+  private scrollTimelineToEdge(edge: 'top' | 'bottom', event?: KeyboardEvent): void {
     if (this.blocksKeyboardBlocked()) {
       return;
     }
@@ -1670,7 +1733,7 @@ export class TimelineChartComponent {
       return;
     }
 
-    event.preventDefault();
+    event?.preventDefault();
     const maxTop = Math.max(0, el.scrollHeight - el.clientHeight);
     this.animateTimelineScrollTo(el, edge === 'top' ? 0 : maxTop);
   }
