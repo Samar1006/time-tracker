@@ -54,6 +54,26 @@ export function activityLabel(event) {
   return 'Unknown activity';
 }
 
+/** Classify manual/voice events at ingest so stored metadata carries category. */
+export function classifyStoredEvent(event) {
+  if (event.type !== 'manual' && event.type !== 'voice') {
+    return event;
+  }
+
+  const { category, confidence } = event.domain
+    ? categorizeDomain(event.domain)
+    : categorizeText(activityLabel(event));
+
+  return {
+    ...event,
+    metadata: {
+      ...(event.metadata ?? {}),
+      category,
+      confidence,
+    },
+  };
+}
+
 export function localDateString(ms, timeZone) {
   return new Intl.DateTimeFormat('en-CA', {
     timeZone,
@@ -339,4 +359,6 @@ export default {
   eventInterval,
   splitEventAcrossHours,
   aggregateTimeline,
+  classifyStoredEvent,
+  activityLabel,
 };

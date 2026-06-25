@@ -41,6 +41,7 @@ export interface EventCreateDraft {
   durationSec: number;
   metadata: {
     category: string;
+    confidence?: number;
     sourceClient: string;
     localDate: string;
     endLocalDate?: string;
