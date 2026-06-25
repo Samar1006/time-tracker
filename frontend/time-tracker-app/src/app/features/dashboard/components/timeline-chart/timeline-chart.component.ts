@@ -1108,7 +1108,7 @@ export class TimelineChartComponent {
         const stepMin = unitMin * count * (nudgeDelta > 0 ? 1 : -1);
         const snapUnit =
           event.shiftKey || isUpperJK ? MINUTES_PER_HOUR : this.cursorStepMinutes();
-        this.moveCursorByMinutes(stepMin, event.repeat, snapUnit);
+        this.moveCursorByMinutes(stepMin, snapUnit);
       }
     }
   }
@@ -1139,7 +1139,7 @@ export class TimelineChartComponent {
 
     const direction = key === 'd' ? 1 : -1;
     const deltaMin = this.halfViewportMinutes(el) * direction;
-    this.moveCursorByMinutes(deltaMin, true, this.cursorStepMinutes());
+    this.moveCursorByMinutes(deltaMin, 1, true);
     return true;
   }
 
@@ -1155,11 +1155,11 @@ export class TimelineChartComponent {
   private halfViewportMinutes(el: HTMLElement): number {
     const inner = this.canvasInnerHeightPx();
     if (inner <= 0) {
-      return this.cursorStepMinutes();
+      return MINUTES_PER_DAY / 2;
     }
 
     const minutes = ((el.clientHeight / 2) / inner) * MINUTES_PER_DAY;
-    return this.snapToAllowedTier(Math.max(this.cursorStepMinutes(), minutes));
+    return Math.max(1, Math.round(minutes));
   }
 
   /** Largest allowed tier (60/30/15/5/1) that keeps ~6 steps across the visible range. */
@@ -1177,19 +1177,6 @@ export class TimelineChartComponent {
       }
     }
     return 1;
-  }
-
-  private snapToAllowedTier(minutes: number): number {
-    let best: (typeof CURSOR_STEP_TIERS)[number] = 1;
-    let bestDist = Number.POSITIVE_INFINITY;
-    for (const tier of CURSOR_STEP_TIERS) {
-      const dist = Math.abs(tier - minutes);
-      if (dist < bestDist) {
-        bestDist = dist;
-        best = tier;
-      }
-    }
-    return best;
   }
 
   private snapCursorMinutes(minutes: number, snapUnit = 1): number {
@@ -1216,17 +1203,25 @@ export class TimelineChartComponent {
     this.animateTimelineScrollTo(el, targetTop, CURSOR_SCROLL_ANIMATION_MS);
   }
 
-  private moveCursorByMinutes(deltaMin: number, fastFollow = false, snapUnit = 1): void {
+  private moveCursorByMinutes(
+    deltaMin: number,
+    snapUnit = 1,
+    centerAfter = false
+  ): void {
     const next = this.insertCursorMin() + deltaMin;
     this.insertCursorMin.set(this.snapCursorMinutes(next, snapUnit));
 
     const el = this.scrollContainer()?.nativeElement;
     if (el) {
-      this.scrollToKeepCursorVisible(el, fastFollow);
+      if (centerAfter) {
+        this.scrollCursorToVerticalCenter(el);
+      } else {
+        this.scrollToKeepCursorVisible(el);
+      }
     }
   }
 
-  private scrollToKeepCursorVisible(el: HTMLElement, fastFollow: boolean): void {
+  private scrollToKeepCursorVisible(el: HTMLElement): void {
     const cursorY = this.minutesToContentY(this.insertCursorMin());
     const viewportH = el.clientHeight;
     const maxTop = Math.max(0, el.scrollHeight - viewportH);
@@ -1243,16 +1238,14 @@ export class TimelineChartComponent {
     }
 
     targetTop = Math.min(maxTop, Math.max(0, targetTop));
-    const delta = Math.abs(targetTop - scrollTop);
-    if (fastFollow || delta < 24) {
-      // Holding j/k should feel immediate; also don't animate tiny corrections.
-      this.cancelScrollAnimation();
-      this.stopContinuousScroll();
-      el.scrollTop = targetTop;
+    if (Math.abs(targetTop - scrollTop) < 0.5) {
       return;
     }
 
-    this.animateTimelineScrollTo(el, targetTop, CURSOR_SCROLL_ANIMATION_MS);
+    // Instant follow avoids flicker when j/k is pressed rapidly at the scroll margin.
+    this.cancelScrollAnimation();
+    this.stopContinuousScroll();
+    el.scrollTop = targetTop;
   }
 
   isDraggingBlock(positioned: PositionedBlock): boolean {
@@ -2160,7 +2153,7 @@ export class TimelineChartComponent {
         this.insertCursorMin.set(MINUTES_PER_DAY);
         const el = this.scrollContainer()?.nativeElement;
         if (el) {
-          this.scrollToKeepCursorVisible(el, true);
+          this.scrollToKeepCursorVisible(el);
         }
       }
       return true;
@@ -2193,7 +2186,7 @@ export class TimelineChartComponent {
         this.insertCursorMin.set(0);
         const el = this.scrollContainer()?.nativeElement;
         if (el) {
-          this.scrollToKeepCursorVisible(el, true);
+          this.scrollToKeepCursorVisible(el);
         }
       }
       return true;
