@@ -28,6 +28,7 @@ import {
   EventTimeChangePayload,
   BlockDeletePayload,
   RESIZE_HANDLE_PX,
+  SNAP_MINUTES,
   buildCreateEventDraft,
   buildEventTimePatch,
   buildRestorePayloadFromBlock,
@@ -596,15 +597,32 @@ export class TimelineChartComponent {
   }
 
   isBlockSelected(positioned: PositionedBlock): boolean {
-    return this.selectedBlockKeys().has(this.blockTrackKey(positioned));
+    return this.isPositionedBlockSelected(positioned);
   }
 
-  @HostListener('document:keydown.escape')
-  onDocumentEscape(): void {
-    if (this.contextMenu() || this.labelingCreate()) {
+  @HostListener('document:keydown', ['$event'])
+  onDocumentKeydown(event: KeyboardEvent): void {
+    if (this.isTypingInField()) {
       return;
     }
-    this.clearSelection();
+
+    if (event.key === 'Escape') {
+      if (this.contextMenu() || this.labelingCreate()) {
+        return;
+      }
+      this.clearSelection();
+      return;
+    }
+
+    if (event.key === 'Backspace') {
+      this.deleteSelectedBlocks(event);
+      return;
+    }
+
+    const nudgeDelta = this.nudgeKeyDelta(event.key);
+    if (nudgeDelta !== null) {
+      this.nudgeSelectedBlocks(nudgeDelta, event);
+    }
   }
 
   isDraggingBlock(positioned: PositionedBlock): boolean {
@@ -1082,18 +1100,159 @@ export class TimelineChartComponent {
     this.updateSelection(new Set());
   }
 
+  private deleteSelectedBlocks(event: KeyboardEvent): void {
+    if (this.blocksKeyboardBlocked()) {
+      return;
+    }
+
+    const deletableIds = this.getSelectedEditableEventIds();
+    if (deletableIds.length === 0) {
+      return;
+    }
+
+    event.preventDefault();
+    this.closeContextMenu();
+    this.hideTooltip();
+
+    for (const eventId of deletableIds) {
+      this.blockDelete.emit(eventId);
+    }
+    this.clearSelection();
+  }
+
+  private nudgeSelectedBlocks(deltaMin: number, event: KeyboardEvent): void {
+    if (this.blocksKeyboardBlocked() || this.selectedBlockKeys().size === 0) {
+      return;
+    }
+
+    const blocks = this.getSelectedBlocks().filter(
+      (block) => this.blockIsEditable(block) && block.eventId
+    );
+    if (blocks.length === 0) {
+      return;
+    }
+
+    event.preventDefault();
+    this.closeContextMenu();
+    this.hideTooltip();
+
+    const minutesOnView = (iso: string, viewDate: string) =>
+      minutesOnViewDate(iso, viewDate, this.timezone());
+
+    let moved = 0;
+    for (const block of blocks) {
+      const interval = visibleBlockIntervalMinutes(block, this.date(), minutesOnView);
+      const clamped = clampIntervalToDay(interval.startMin + deltaMin, interval.endMin + deltaMin);
+      if (clamped.startMin === interval.startMin && clamped.endMin === interval.endMin) {
+        continue;
+      }
+
+      try {
+        const patch = buildEventTimePatch(
+          block,
+          this.date(),
+          clamped.startMin,
+          clamped.endMin,
+          minutesOnView
+        );
+        this.eventTimeChange.emit(patch);
+        moved += 1;
+      } catch {
+        // skip block
+      }
+    }
+
+    if (moved === 0) {
+      return;
+    }
+  }
+
+  private nudgeKeyDelta(key: string): number | null {
+    if (key === 'ArrowDown' || key.toLowerCase() === 'j') {
+      return SNAP_MINUTES;
+    }
+    if (key === 'ArrowUp' || key.toLowerCase() === 'k') {
+      return -SNAP_MINUTES;
+    }
+    return null;
+  }
+
+  private blocksKeyboardBlocked(): boolean {
+    return Boolean(
+      this.labelingCreate() ||
+      this.contextMenu() ||
+      this.activeDrag() ||
+      this.activeCreateDrag()
+    );
+  }
+
+  private isPositionedBlockSelected(positioned: PositionedBlock): boolean {
+    if (this.selectedBlockKeys().has(this.blockTrackKey(positioned))) {
+      return true;
+    }
+    const eventId = positioned.block.eventId ?? '';
+    return eventId !== '' && this.selectedEventIdsFromKeys().has(eventId);
+  }
+
+  private selectedEventIdsFromKeys(): Set<string> {
+    const ids = new Set<string>();
+    for (const key of this.selectedBlockKeys()) {
+      const eventId = key.split('|')[0];
+      if (eventId) {
+        ids.add(eventId);
+      }
+    }
+    return ids;
+  }
+
+  private getSelectedEditableEventIds(): string[] {
+    const ids: string[] = [];
+    const seen = new Set<string>();
+
+    for (const block of this.getSelectedBlocks()) {
+      if (!this.blockIsEditable(block)) {
+        continue;
+      }
+      const eventId = block.eventId;
+      if (!eventId || seen.has(eventId)) {
+        continue;
+      }
+      seen.add(eventId);
+      ids.push(eventId);
+    }
+
+    return ids;
+  }
+
+  private isTypingInField(): boolean {
+    const el = document.activeElement;
+    if (!el) {
+      return false;
+    }
+    const tag = el.tagName;
+    return (
+      tag === 'INPUT' ||
+      tag === 'TEXTAREA' ||
+      tag === 'SELECT' ||
+      (el as HTMLElement).isContentEditable
+    );
+  }
+
   private updateSelection(keys: Set<string>): void {
     this.selectedBlockKeys.set(keys);
     this.emitSelectionChange();
   }
 
   private emitSelectionChange(): void {
-    const keys = this.selectedBlockKeys();
+    this.blocksSelectionChange.emit(this.getSelectedBlocks());
+  }
+
+  private getSelectedBlocks(): TimelineBlock[] {
     const seenEventIds = new Set<string>();
     const blocks: TimelineBlock[] = [];
 
     for (const positioned of this.renderBlocks()) {
-      if (!keys.has(this.blockTrackKey(positioned))) {
+      if (!this.isPositionedBlockSelected(positioned)) {
         continue;
       }
       const eventId = positioned.block.eventId ?? '';
@@ -1106,7 +1265,7 @@ export class TimelineChartComponent {
       blocks.push(positioned.block);
     }
 
-    this.blocksSelectionChange.emit(blocks);
+    return blocks;
   }
 
   onWheelZoom(event: WheelEvent): void {
