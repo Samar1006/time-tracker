@@ -1,8 +1,9 @@
-import { Component, computed, inject, signal } from '@angular/core';
+import { Component, HostListener, computed, inject, signal } from '@angular/core';
 import {
   catchError,
   combineLatest,
   finalize,
+  firstValueFrom,
   interval,
   map,
   of,
@@ -13,12 +14,18 @@ import {
 import { toObservable, toSignal } from '@angular/core/rxjs-interop';
 
 import { AuthService } from '../../../../core/services/auth.service';
-import { TimelineService } from '../../../../core/services/timeline.service';
+import { TimelineService, CreateEventPayload } from '../../../../core/services/timeline.service';
+import { TimelineUndoService } from '../../../../core/services/timeline-undo.service';
 import { VoiceLogService } from '../../../../core/services/voice-log.service';
 import { AppShellComponent } from '../../../../shared/layouts/app-shell/app-shell.component';
 import { TimelineChartComponent } from '../../components/timeline-chart/timeline-chart.component';
-import { EventCreateDraft, EventTimePatch } from '../../components/timeline-chart/timeline-drag.util';
-import { TimelineResponse } from '../../../../core/models/timeline.model';
+import {
+  BlockDeletePayload,
+  EventCreateDraft,
+  EventTimeChangePayload,
+  EventTimePatch
+} from '../../components/timeline-chart/timeline-drag.util';
+import { TimelineBlock, TimelineResponse } from '../../../../core/models/timeline.model';
 import {
   getVisibleHours,
   shiftDate,
@@ -37,6 +44,7 @@ const REFRESH_MS = 60_000;
 export class DashboardComponent {
   readonly auth = inject(AuthService);
   private readonly timelineService = inject(TimelineService);
+  readonly undoService = inject(TimelineUndoService);
   readonly voiceLog = inject(VoiceLogService);
 
   readonly selectedDate = signal(toDateInputValue(new Date()));
@@ -132,6 +140,27 @@ export class DashboardComponent {
     return getVisibleHours(current?.hours ?? [], 0, 23);
   });
 
+  @HostListener('document:keydown', ['$event'])
+  onDocumentKeydown(event: KeyboardEvent): void {
+    const el = event.target as HTMLElement;
+    if (el.isContentEditable || el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') {
+      return;
+    }
+
+    const mod = event.metaKey || event.ctrlKey;
+    if (!mod || (event.key !== 'z' && event.key !== 'Z')) {
+      return;
+    }
+
+    event.preventDefault();
+
+    if (event.shiftKey) {
+      void this.performRedo();
+    } else {
+      void this.performUndo();
+    }
+  }
+
   previousDay(): void {
     this.selectDate(shiftDate(this.selectedDate(), -1));
   }
@@ -144,18 +173,27 @@ export class DashboardComponent {
     this.selectedDate.set(date);
   }
 
-  onEventTimeChange(patch: EventTimePatch): void {
+  onEventTimeChange(change: EventTimeChangePayload): void {
+    const viewDate = this.selectedDate();
     this.patchError.set(null);
     this.softRefresh.set(true);
 
     this.timelineService
-      .updateEvent(patch.eventId, {
-        timestamp: patch.timestamp,
-        durationSec: patch.durationSec,
-        metadata: patch.metadata
+      .updateEvent(change.next.eventId, {
+        timestamp: change.next.timestamp,
+        durationSec: change.next.durationSec,
+        metadata: change.next.metadata
       })
       .subscribe({
-        next: () => this.reloadTick.update((n) => n + 1),
+        next: () => {
+          this.reloadTick.update((n) => n + 1);
+          this.undoService.record({
+            label: change.label,
+            viewDate,
+            undo: () => this.applyEventPatch(change.previous),
+            redo: () => this.applyEventPatch(change.next)
+          });
+        },
         error: () => {
           this.softRefresh.set(false);
           this.patchError.set('Could not save timeline change. Your edit was reverted.');
@@ -164,12 +202,30 @@ export class DashboardComponent {
   }
 
   onActivityCreate(draft: EventCreateDraft): void {
+    const viewDate = this.selectedDate();
     this.patchError.set(null);
     this.softRefresh.set(true);
     this.createBusy.set(true);
 
     this.timelineService.createEvent(draft).subscribe({
-      next: () => this.reloadTick.update((n) => n + 1),
+      next: (response) => {
+        this.reloadTick.update((n) => n + 1);
+        const createdId = response.ids[0];
+        if (!createdId) {
+          return;
+        }
+
+        let currentId = createdId;
+        this.undoService.record({
+          label: 'Create block',
+          viewDate,
+          undo: () => this.deleteEventForUndo(currentId, viewDate),
+          redo: async () => {
+            const res = await this.createEventForUndo(draft);
+            currentId = res.ids[0];
+          }
+        });
+      },
       error: () => {
         this.softRefresh.set(false);
         this.patchError.set('Could not create activity. Try again.');
@@ -178,16 +234,34 @@ export class DashboardComponent {
     });
   }
 
-  onBlockDelete(eventId: string): void {
+  onBlockDelete(payload: BlockDeletePayload): void {
     if (!this.userId()) {
       return;
     }
 
+    const viewDate = this.selectedDate();
     this.patchError.set(null);
     this.softRefresh.set(true);
 
-    this.timelineService.deleteEvent(eventId, this.selectedDate()).subscribe({
-      next: () => this.reloadTick.update((n) => n + 1),
+    this.timelineService.deleteEvent(payload.eventId, viewDate).subscribe({
+      next: () => {
+        this.reloadTick.update((n) => n + 1);
+
+        let restoredId: string | undefined;
+        this.undoService.record({
+          label: 'Delete block',
+          viewDate,
+          undo: async () => {
+            const res = await this.createEventForUndo(payload.restore);
+            restoredId = res.ids[0];
+          },
+          redo: async () => {
+            if (restoredId) {
+              await this.deleteEventForUndo(restoredId, viewDate);
+            }
+          }
+        });
+      },
       error: () => {
         this.softRefresh.set(false);
         this.patchError.set('Could not delete this time block.');
@@ -227,5 +301,67 @@ export class DashboardComponent {
       const msg = err instanceof Error ? err.message : 'Voice log failed';
       this.voiceError.set(msg);
     }
+  }
+
+  private async performUndo(): Promise<void> {
+    const entry = this.undoService.peekUndo();
+    if (!entry) {
+      return;
+    }
+
+    this.navigateToEntryDate(entry.viewDate);
+    this.patchError.set(null);
+    this.softRefresh.set(true);
+
+    try {
+      await this.undoService.undo();
+      this.reloadTick.update((n) => n + 1);
+    } catch {
+      this.softRefresh.set(false);
+      this.patchError.set('Could not undo timeline change.');
+    }
+  }
+
+  private async performRedo(): Promise<void> {
+    const entry = this.undoService.peekRedo();
+    if (!entry) {
+      return;
+    }
+
+    this.navigateToEntryDate(entry.viewDate);
+    this.patchError.set(null);
+    this.softRefresh.set(true);
+
+    try {
+      await this.undoService.redo();
+      this.reloadTick.update((n) => n + 1);
+    } catch {
+      this.softRefresh.set(false);
+      this.patchError.set('Could not redo timeline change.');
+    }
+  }
+
+  private navigateToEntryDate(viewDate: string): void {
+    if (viewDate !== this.selectedDate()) {
+      this.selectedDate.set(viewDate);
+    }
+  }
+
+  private applyEventPatch(patch: EventTimePatch): Promise<void> {
+    return firstValueFrom(
+      this.timelineService.updateEvent(patch.eventId, {
+        timestamp: patch.timestamp,
+        durationSec: patch.durationSec,
+        metadata: patch.metadata
+      })
+    ).then(() => undefined);
+  }
+
+  private deleteEventForUndo(eventId: string, viewDate: string): Promise<void> {
+    return firstValueFrom(this.timelineService.deleteEvent(eventId, viewDate)).then(() => undefined);
+  }
+
+  private createEventForUndo(payload: CreateEventPayload) {
+    return firstValueFrom(this.timelineService.createEvent(payload));
   }
 }

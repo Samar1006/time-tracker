@@ -1,3 +1,4 @@
+import { CreateEventPayload } from '../../../../core/services/timeline.service';
 import { TimelineBlock } from '../../../../core/models/timeline.model';
 import { localTimestamp } from '../../../../core/utils/voice-block.util';
 
@@ -13,6 +14,17 @@ export interface EventTimePatch {
   timestamp: string;
   durationSec: number;
   metadata: { localDate: string; endLocalDate?: string };
+}
+
+export interface EventTimeChangePayload {
+  label: string;
+  previous: EventTimePatch;
+  next: EventTimePatch;
+}
+
+export interface BlockDeletePayload {
+  eventId: string;
+  restore: CreateEventPayload;
 }
 
 export interface EventCreateDraft {
@@ -125,6 +137,29 @@ export function visibleBlockIntervalMinutes(
     return { startMin: clipStart, endMin: clipStart };
   }
   return { startMin: clipStart, endMin: clipEnd };
+}
+
+export function buildRestorePayloadFromBlock(
+  block: TimelineBlock,
+  viewDate: string
+): CreateEventPayload {
+  const startIso = block.eventStart ?? block.start;
+  const durationSec =
+    block.eventStart && block.eventEnd
+      ? Math.max(0, Math.round((Date.parse(block.eventEnd) - Date.parse(block.eventStart)) / 1000))
+      : block.durationSec;
+
+  return {
+    timestamp: startIso,
+    type: 'manual',
+    title: block.activity,
+    durationSec,
+    metadata: {
+      category: block.category,
+      localDate: viewDate,
+      sourceClient: 'dashboard-undo'
+    }
+  };
 }
 
 export function buildEventTimePatch(

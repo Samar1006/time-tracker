@@ -60,6 +60,11 @@
           @if (patchError()) {
             <p class="dashboard-voice-feedback dashboard-voice-feedback--error">{{ patchError() }}</p>
           }
+          @if (undoService.statusMessage()) {
+            <p class="dashboard-voice-feedback dashboard-voice-feedback--undo" aria-live="polite">
+              {{ undoService.statusMessage() }}
+            </p>
+          }
         </div>
       </div>
     </div>
