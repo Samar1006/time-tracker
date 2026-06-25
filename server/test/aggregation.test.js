@@ -55,6 +55,45 @@ describe('aggregationService', () => {
     assert.ok(result.totalTrackedSec > 10000);
   });
 
+  it('coalesces adjacent browser extension events into one continuous block', () => {
+    const events = [
+      {
+        id: 'ext-1',
+        userId: USER,
+        timestamp: `${DATE}T10:00:00.000Z`,
+        type: 'domain_visit',
+        app: 'Chrome',
+        domain: 'github.com',
+        durationSec: 60,
+      },
+      {
+        id: 'ext-2',
+        userId: USER,
+        timestamp: `${DATE}T10:01:00.000Z`,
+        type: 'domain_visit',
+        app: 'Chrome',
+        domain: 'github.com',
+        durationSec: 60,
+      },
+      {
+        id: 'ext-3',
+        userId: USER,
+        timestamp: `${DATE}T10:02:00.000Z`,
+        type: 'domain_visit',
+        app: 'Chrome',
+        domain: 'github.com',
+        durationSec: 60,
+      },
+    ];
+
+    const hour10 = aggregateTimeline(events, DATE, { userId: USER }).hours[10];
+    assert.equal(hour10.blocks.length, 1);
+    assert.equal(hour10.blocks[0].activity, 'github.com');
+    assert.equal(hour10.blocks[0].durationSec, 180);
+    assert.equal(hour10.blocks[0].start, `${DATE}T10:00:00.000Z`);
+    assert.equal(hour10.blocks[0].end, `${DATE}T10:03:00.000Z`);
+  });
+
   it('keeps distinct stored events separate even when activity matches', () => {
     const events = [
       {

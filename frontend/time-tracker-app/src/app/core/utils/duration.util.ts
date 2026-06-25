@@ -4,7 +4,7 @@ export function formatDuration(seconds: number): string {
   }
 
   if (seconds < 60) {
-    return '>1m';
+    return '<1m';
   }
 
   const hours = Math.floor(seconds / 3600);

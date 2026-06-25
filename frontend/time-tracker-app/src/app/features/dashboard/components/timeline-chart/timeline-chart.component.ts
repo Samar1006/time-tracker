@@ -120,6 +120,16 @@ function blocksAreContiguous(a: TimelineBlock, b: TimelineBlock): boolean {
   return gapMs >= 0 && gapMs <= 1000;
 }
 
+function blocksShouldCoalesce(a: TimelineBlock, b: TimelineBlock): boolean {
+  if (!blocksAreContiguous(a, b)) return false;
+  if (a.activity !== b.activity || a.category !== b.category || a.source !== b.source) {
+    return false;
+  }
+  // Browser extension posts one event per minute; merge into one continuous block.
+  if (a.source === 'tracked') return true;
+  return (a.eventId ?? '') === (b.eventId ?? '');
+}
+
 function blockFullDurationSec(block: TimelineBlock): number {
   if (block.eventStart && block.eventEnd) {
     return Math.max(
@@ -137,14 +147,7 @@ function mergeContiguousBlocks(blocks: TimelineBlock[]): TimelineBlock[] {
 
   for (const block of sorted) {
     const last = merged.at(-1);
-    if (
-      last &&
-      blocksAreContiguous(last, block) &&
-      last.activity === block.activity &&
-      last.category === block.category &&
-      last.source === block.source &&
-      (last.eventId ?? '') === (block.eventId ?? '')
-    ) {
+    if (last && blocksShouldCoalesce(last, block)) {
       last.end = block.end;
       last.durationSec += block.durationSec;
       last.eventEnd = block.eventEnd ?? block.end;
