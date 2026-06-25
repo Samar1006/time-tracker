@@ -4,6 +4,7 @@ import {
   combineLatest,
   finalize,
   firstValueFrom,
+  forkJoin,
   interval,
   map,
   of,
@@ -21,6 +22,7 @@ import { AppShellComponent } from '../../../../shared/layouts/app-shell/app-shel
 import { TimelineChartComponent } from '../../components/timeline-chart/timeline-chart.component';
 import {
   BlockDeletePayload,
+  BlocksDayShiftPayload,
   EventCreateDraft,
   EventTimeChangePayload,
   EventTimePatch
@@ -56,7 +58,10 @@ export class DashboardComponent {
   readonly createBusy = signal(false);
   private readonly reloadTick = signal(0);
   private readonly softRefresh = signal(false);
-  private readonly cachedTimeline = signal<TimelineResponse | null>(null);
+  readonly hasLoadedTimeline = signal(false);
+  private readonly timelineByDate = signal<ReadonlyMap<string, TimelineResponse>>(new Map());
+  /** Survives timeline chart remounts during day-shift reloads. */
+  readonly preservedSelectionIds = signal<readonly string[]>([]);
 
   private readonly dashboardState = toSignal(
     combineLatest([
@@ -71,9 +76,10 @@ export class DashboardComponent {
         )
       ),
       switchMap(({ date, userId }) => {
-        const cached = this.cachedTimeline();
-        const hasCachedForDate = cached?.date === date;
-        const keepTimelineMounted = this.softRefresh() || hasCachedForDate;
+        const cached = this.timelineByDate().get(date);
+        const hasCachedForDate = Boolean(cached);
+        const keepTimelineMounted =
+          this.softRefresh() || hasCachedForDate || this.hasLoadedTimeline();
         if (!keepTimelineMounted) {
           this.loading.set(true);
         }
@@ -88,18 +94,23 @@ export class DashboardComponent {
         return this.timelineService.getTimeline(userId, date).pipe(
           timeout(API_TIMEOUT_MS),
           catchError(() => {
-            if (hasCachedForDate && cached) {
+            if (cached) {
               return of(cached);
             }
             return of(null);
           }),
           map((timeline) => {
             if (timeline) {
-              this.cachedTimeline.set(timeline);
+              this.hasLoadedTimeline.set(true);
+              this.timelineByDate.update((entries) => {
+                const next = new Map(entries);
+                next.set(date, timeline);
+                return next;
+              });
               return { timeline };
             }
 
-            if (hasCachedForDate && cached) {
+            if (cached) {
               return { timeline: cached };
             }
 
@@ -127,11 +138,11 @@ export class DashboardComponent {
     if (current?.date === viewDate) {
       return current;
     }
-    const cached = this.cachedTimeline();
-    if (cached?.date === viewDate) {
+    const cached = this.timelineByDate().get(viewDate);
+    if (cached) {
       return cached;
     }
-    return current;
+    return null;
   });
   readonly userId = computed(() => this.auth.user()?.userId ?? null);
 
@@ -186,6 +197,11 @@ export class DashboardComponent {
       })
       .subscribe({
         next: () => {
+          this.invalidateTimelineCache(
+            viewDate,
+            change.previous.metadata.localDate,
+            change.next.metadata.localDate
+          );
           this.reloadTick.update((n) => n + 1);
           this.undoService.record({
             label: change.label,
@@ -199,6 +215,52 @@ export class DashboardComponent {
           this.patchError.set('Could not save timeline change. Your edit was reverted.');
         }
       });
+  }
+
+  onBlocksDayShift(payload: BlocksDayShiftPayload): void {
+    if (payload.changes.length === 0) {
+      return;
+    }
+
+    this.patchError.set(null);
+    this.softRefresh.set(true);
+
+    const selectionIds = payload.changes
+      .map((change) => change.next.eventId)
+      .filter((id): id is string => Boolean(id));
+    this.preservedSelectionIds.set(selectionIds);
+
+    if (this.selectedDate() !== payload.targetDate) {
+      this.selectedDate.set(payload.targetDate);
+    }
+
+    forkJoin(
+      payload.changes.map((change) =>
+        this.timelineService.updateEvent(change.next.eventId, {
+          timestamp: change.next.timestamp,
+          durationSec: change.next.durationSec,
+          metadata: change.next.metadata
+        })
+      )
+    ).subscribe({
+      next: () => {
+        this.invalidateTimelineCache(payload.sourceDate, payload.targetDate);
+        this.softRefresh.set(true);
+        this.reloadTick.update((n) => n + 1);
+        for (const change of payload.changes) {
+          this.undoService.record({
+            label: change.label,
+            viewDate: payload.sourceDate,
+            undo: () => this.applyEventPatch(change.previous),
+            redo: () => this.applyEventPatch(change.next)
+          });
+        }
+      },
+      error: () => {
+        this.softRefresh.set(false);
+        this.patchError.set('Could not save timeline change. Your edit was reverted.');
+      }
+    });
   }
 
   onActivityCreate(draft: EventCreateDraft): void {
@@ -234,8 +296,15 @@ export class DashboardComponent {
     });
   }
 
-  onSelectionChange(_blocks: TimelineBlock[]): void {
-    // Wired for follow-up bulk delete / undo integration.
+  onSelectionChange(blocks: TimelineBlock[]): void {
+    const ids = blocks
+      .map((block) => block.eventId)
+      .filter((id): id is string => Boolean(id));
+    const prev = this.preservedSelectionIds();
+    if (ids.length === prev.length && ids.every((id, index) => id === prev[index])) {
+      return;
+    }
+    this.preservedSelectionIds.set(ids);
   }
 
   onBlockDelete(payload: BlockDeletePayload): void {
@@ -349,6 +418,18 @@ export class DashboardComponent {
     if (viewDate !== this.selectedDate()) {
       this.selectedDate.set(viewDate);
     }
+  }
+
+  private invalidateTimelineCache(...dates: string[]): void {
+    this.timelineByDate.update((entries) => {
+      const next = new Map(entries);
+      for (const date of dates) {
+        if (date) {
+          next.delete(date);
+        }
+      }
+      return next;
+    });
   }
 
   private applyEventPatch(patch: EventTimePatch): Promise<void> {
