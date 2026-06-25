@@ -83,6 +83,20 @@ export function clampIntervalToDay(
   return { startMin: start, endMin: end };
 }
 
+/** Minutes to shift a group so the earliest start (top) or latest end (bottom) hits the day edge. */
+export function groupEdgeShiftDeltaMinutes(
+  intervals: readonly { startMin: number; endMin: number }[],
+  edge: 'top' | 'bottom'
+): number {
+  if (intervals.length === 0) {
+    return 0;
+  }
+  if (edge === 'top') {
+    return -Math.min(...intervals.map((interval) => interval.startMin));
+  }
+  return MINUTES_PER_DAY - Math.max(...intervals.map((interval) => interval.endMin));
+}
+
 /** Vertical pointer delta in px → minutes on the day column. */
 export function deltaPxToMinutes(deltaPx: number, canvasHeightPx: number): number {
   if (canvasHeightPx <= 0) return 0;

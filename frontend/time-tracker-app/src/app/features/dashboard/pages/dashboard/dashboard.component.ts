@@ -308,7 +308,11 @@ export class DashboardComponent {
   }
 
   onBlockDelete(payload: BlockDeletePayload): void {
-    if (!this.userId()) {
+    this.onBlocksDelete([payload]);
+  }
+
+  onBlocksDelete(payloads: BlockDeletePayload[]): void {
+    if (!this.userId() || payloads.length === 0) {
       return;
     }
 
@@ -316,28 +320,44 @@ export class DashboardComponent {
     this.patchError.set(null);
     this.softRefresh.set(true);
 
-    this.timelineService.deleteEvent(payload.eventId, viewDate).subscribe({
+    forkJoin(
+      payloads.map((payload) => this.timelineService.deleteEvent(payload.eventId, viewDate))
+    ).subscribe({
       next: () => {
         this.reloadTick.update((n) => n + 1);
 
-        let restoredId: string | undefined;
+        const restores = payloads.map((payload) => payload.restore);
+        const restoredIds: string[] = [];
+        const label =
+          payloads.length === 1 ? 'Delete block' : `Delete ${payloads.length} blocks`;
+
         this.undoService.record({
-          label: 'Delete block',
+          label,
           viewDate,
           undo: async () => {
-            const res = await this.createEventForUndo(payload.restore);
-            restoredId = res.ids[0];
+            restoredIds.length = 0;
+            for (const restore of restores) {
+              const res = await this.createEventForUndo(restore);
+              const id = res.ids[0];
+              if (id) {
+                restoredIds.push(id);
+              }
+            }
           },
           redo: async () => {
-            if (restoredId) {
-              await this.deleteEventForUndo(restoredId, viewDate);
+            for (const id of restoredIds) {
+              await this.deleteEventForUndo(id, viewDate);
             }
           }
         });
       },
       error: () => {
         this.softRefresh.set(false);
-        this.patchError.set('Could not delete this time block.');
+        this.patchError.set(
+          payloads.length === 1
+            ? 'Could not delete this time block.'
+            : 'Could not delete the selected time blocks.'
+        );
       }
     });
   }

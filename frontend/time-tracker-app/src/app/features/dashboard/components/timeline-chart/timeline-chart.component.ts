@@ -41,6 +41,7 @@ import {
   defaultCreateInterval,
   clampIntervalToDay,
   deltaPxToMinutes,
+  groupEdgeShiftDeltaMinutes,
   offsetYToMinutes
 } from './timeline-drag.util';
 
@@ -526,6 +527,7 @@ export class TimelineChartComponent {
   readonly eventTimeChange = output<EventTimeChangePayload>();
   readonly activityCreate = output<EventCreateDraft>();
   readonly blockDelete = output<BlockDeletePayload>();
+  readonly blocksDelete = output<BlockDeletePayload[]>();
   readonly blocksDayShift = output<BlocksDayShiftPayload>();
   readonly blocksSelectionChange = output<TimelineBlock[]>();
 
@@ -718,12 +720,20 @@ export class TimelineChartComponent {
 
     effect(() => {
       const preserved = this.preservedSelectionIds();
-      this.hours();
       this.date();
       if (preserved.length === 0) {
         return;
       }
       untracked(() => this.applyPreservedSelection(preserved));
+    });
+
+    effect(() => {
+      this.renderBlocks();
+      const eventIds = this.selectedEventIds();
+      if (eventIds.size === 0) {
+        return;
+      }
+      untracked(() => this.refreshSelectionKeysFromEventIds(eventIds));
     });
 
     effect(() => {
@@ -910,7 +920,10 @@ export class TimelineChartComponent {
 
   blockTrackKey(positioned: PositionedBlock): string {
     const { block } = positioned;
-    return `${block.eventId ?? ''}|${block.start}|${block.end}|${block.activity}|${block.category}|c${positioned.column}`;
+    if (block.eventId) {
+      return block.eventId;
+    }
+    return `${block.start}|${block.end}|${block.activity}|${block.category}`;
   }
 
   blockIsEditable(block: TimelineBlock): boolean {
@@ -1478,13 +1491,11 @@ export class TimelineChartComponent {
     this.hideTooltip();
 
     const viewDate = this.date();
-    for (const block of deletable) {
-      const eventId = block.eventId!;
-      this.blockDelete.emit({
-        eventId,
-        restore: buildRestorePayloadFromBlock(block, viewDate)
-      });
-    }
+    const payloads = deletable.map((block) => ({
+      eventId: block.eventId!,
+      restore: buildRestorePayloadFromBlock(block, viewDate)
+    }));
+    this.blocksDelete.emit(payloads);
     this.clearSelection();
   }
 
@@ -1561,13 +1572,26 @@ export class TimelineChartComponent {
     const minutesOnView = (iso: string, viewDate: string) =>
       minutesOnViewDate(iso, viewDate, this.timezone());
 
-    for (const block of blocks) {
-      const interval = visibleBlockIntervalMinutes(block, this.date(), minutesOnView);
-      const durationMin = interval.endMin - interval.startMin;
-      const target =
-        edge === 'top'
-          ? clampIntervalToDay(0, durationMin)
-          : clampIntervalToDay(MINUTES_PER_DAY - durationMin, MINUTES_PER_DAY);
+    const viewDate = this.date();
+    const blockIntervals = blocks.map((block) => ({
+      block,
+      interval: visibleBlockIntervalMinutes(block, viewDate, minutesOnView)
+    }));
+    const deltaMin = groupEdgeShiftDeltaMinutes(
+      blockIntervals.map(({ interval }) => interval),
+      edge
+    );
+
+    if (deltaMin === 0) {
+      this.scrollTimelineToEdge(edge);
+      return;
+    }
+
+    for (const { block, interval } of blockIntervals) {
+      const target = clampIntervalToDay(
+        interval.startMin + deltaMin,
+        interval.endMin + deltaMin
+      );
 
       if (target.startMin === interval.startMin && target.endMin === interval.endMin) {
         continue;
@@ -1576,14 +1600,14 @@ export class TimelineChartComponent {
       try {
         const previous = buildEventTimePatch(
           block,
-          this.date(),
+          viewDate,
           interval.startMin,
           interval.endMin,
           minutesOnView
         );
         const next = buildEventTimePatch(
           block,
-          this.date(),
+          viewDate,
           target.startMin,
           target.endMin,
           minutesOnView
@@ -1693,6 +1717,16 @@ export class TimelineChartComponent {
   private applyPreservedSelection(preserved: readonly string[]): void {
     const eventIds = new Set(preserved);
     const current = this.selectedEventIds();
+
+    // Parent preserved ids can lag behind a shift-click; don't drop newer local picks.
+    if (
+      current.size > eventIds.size &&
+      [...eventIds].every((id) => current.has(id))
+    ) {
+      this.refreshSelectionKeysFromEventIds(current);
+      return;
+    }
+
     if (current.size !== eventIds.size || [...current].some((id) => !eventIds.has(id))) {
       this.selectedEventIds.set(eventIds);
     }
@@ -2009,10 +2043,10 @@ export class TimelineChartComponent {
       }
     }
     for (const key of keys) {
-      const id = key.split('|')[0];
-      if (id) {
-        eventIds.add(id);
+      if (key.includes('|')) {
+        continue;
       }
+      eventIds.add(key);
     }
     this.selectedEventIds.set(eventIds);
     this.emitSelectionChange();
