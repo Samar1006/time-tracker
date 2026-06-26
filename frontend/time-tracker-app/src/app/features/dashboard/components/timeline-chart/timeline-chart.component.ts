@@ -63,7 +63,7 @@ interface TooltipState {
 interface ContextMenuState {
   x: number;
   y: number;
-  positioned: PositionedBlock;
+  positioned?: PositionedBlock;
 }
 
 /** Vertical event block in Apple Calendar–style day column. */
@@ -678,11 +678,14 @@ export class TimelineChartComponent {
   } | null = null;
   private pendingFirstGTimer: ReturnType<typeof setTimeout> | null = null;
   private pendingFirstDTimer: ReturnType<typeof setTimeout> | null = null;
+  /** True after the first `d` in a delete operator (e.g. `dw`, `dG`); cleared on motion or cancel. */
+  private deleteOperatorArmed = false;
   private pendingFirstYTimer: ReturnType<typeof setTimeout> | null = null;
   private pendingFirstZTimer: ReturnType<typeof setTimeout> | null = null;
   private pendingMotionCount = '';
   private yankBuffer: YankBuffer | null = null;
   private yankFlashTimer: ReturnType<typeof setTimeout> | null = null;
+  private tooltipFromMouse = false;
   /** Fixed end of visual selection (where `v` was pressed). */
   private visualSelectAnchorKey: string | null = null;
   /** Moving end of visual selection; j/k shifts this toward/away from the anchor. */
@@ -870,6 +873,20 @@ export class TimelineChartComponent {
     });
 
     effect(() => {
+      if (!this.keyboardSettings.vimMotionsEnabled()) {
+        return;
+      }
+      this.insertCursorMin();
+      this.renderBlocks();
+      this.date();
+      this.showInsertCursor();
+      if (this.tooltipFromMouse) {
+        return;
+      }
+      untracked(() => this.syncCursorTooltip());
+    });
+
+    effect(() => {
       this.hours();
       const date = this.date();
       const targetDate = this.pendingReselectTargetDate();
@@ -910,7 +927,12 @@ export class TimelineChartComponent {
       this.scrollResizeObserver.observe(el);
       this.saveScrollViewport(el);
 
-      const onScroll = () => this.saveScrollViewport(el);
+      const onScroll = () => {
+        this.saveScrollViewport(el);
+        if (!this.tooltipFromMouse) {
+          this.syncCursorTooltip();
+        }
+      };
       el.addEventListener('scroll', onScroll, { passive: true });
       this.destroyRef.onDestroy(() => el.removeEventListener('scroll', onScroll));
 
@@ -1030,20 +1052,65 @@ export class TimelineChartComponent {
   showBlockTooltip(positioned: PositionedBlock, event: MouseEvent): void {
     const target = event.currentTarget as HTMLElement;
     const rect = target.getBoundingClientRect();
-    const { block } = positioned;
+    this.tooltipFromMouse = true;
+    this.tooltip.set(
+      this.blockTooltipState(positioned, rect.left + rect.width / 2, rect.top - 8)
+    );
+  }
 
-    this.tooltip.set({
+  onBlockMouseLeave(): void {
+    this.tooltipFromMouse = false;
+    this.syncCursorTooltip();
+  }
+
+  hideTooltip(): void {
+    this.tooltipFromMouse = false;
+    this.tooltip.set(null);
+  }
+
+  private blockTooltipState(
+    positioned: PositionedBlock,
+    x: number,
+    y: number
+  ): TooltipState {
+    const { block } = positioned;
+    return {
       category: CATEGORY_LABELS[block.category],
       duration: this.blockDurationLabel(block),
       activity: block.activity,
       timeRange: this.formatTimeRange(block),
-      x: rect.left + rect.width / 2,
-      y: rect.top - 8
-    });
+      x,
+      y
+    };
   }
 
-  hideTooltip(): void {
-    this.tooltip.set(null);
+  private tooltipPositionForBlock(positioned: PositionedBlock): { x: number; y: number } {
+    const canvas = this.calendarCanvas()?.nativeElement;
+    if (!canvas) {
+      return { x: 0, y: 0 };
+    }
+
+    const rect = canvas.getBoundingClientRect();
+    const topPx = rect.top + (positioned.topPct / 100) * rect.height;
+    const leftPx = rect.left + (this.blockLeftPct(positioned) / 100) * rect.width;
+    const widthPx = (this.blockWidthPct(positioned) / 100) * rect.width;
+    return { x: leftPx + widthPx / 2, y: topPx - 8 };
+  }
+
+  private syncCursorTooltip(): void {
+    if (!this.keyboardSettings.vimMotionsEnabled() || !this.showInsertCursor()) {
+      this.tooltip.set(null);
+      return;
+    }
+
+    const positioned = this.findBlockAtCursor();
+    if (!positioned) {
+      this.tooltip.set(null);
+      return;
+    }
+
+    const { x, y } = this.tooltipPositionForBlock(positioned);
+    this.tooltip.set(this.blockTooltipState(positioned, x, y));
   }
 
   onBlockContextMenu(event: MouseEvent, positioned: PositionedBlock): void {
@@ -1062,12 +1129,40 @@ export class TimelineChartComponent {
         this.selectSingleBlock(positioned);
       }
     }
-    this.contextMenu.set({
-      x: event.clientX,
-      y: event.clientY,
-      positioned
-    });
+    this.moveCursorToMinutes(this.blockMidpointMinutes(positioned));
+    this.openContextMenu(event.clientX, event.clientY, positioned);
+  }
 
+  onCanvasContextMenu(event: MouseEvent): void {
+    if (event.target !== event.currentTarget) {
+      return;
+    }
+    if (
+      this.labelingCreate() ||
+      this.labelingRename() ||
+      this.insertMode() ||
+      this.activeDrag() ||
+      this.activeCreateDrag()
+    ) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    this.hideTooltip();
+    this.closeContextMenu();
+    this.clearSelection();
+
+    const canvas = this.calendarCanvas()?.nativeElement;
+    if (canvas) {
+      this.moveCursorToMinutes(this.clientYToMinutes(event.clientY, canvas));
+    }
+
+    this.openContextMenu(event.clientX, event.clientY);
+  }
+
+  private openContextMenu(x: number, y: number, positioned?: PositionedBlock): void {
+    this.contextMenu.set({ x, y, positioned });
     requestAnimationFrame(() => {
       document.addEventListener('click', this.boundCloseContextMenu);
       document.addEventListener('contextmenu', this.boundCloseContextMenu);
@@ -1088,7 +1183,7 @@ export class TimelineChartComponent {
   confirmDeleteBlock(event: MouseEvent): void {
     event.stopPropagation();
     const menu = this.contextMenu();
-    const block = menu?.positioned.block;
+    const block = menu?.positioned?.block;
     const eventId = block?.eventId;
     this.closeContextMenu();
     if (eventId && block) {
@@ -1097,6 +1192,35 @@ export class TimelineChartComponent {
         restore: buildRestorePayloadFromBlock(block, this.date())
       });
     }
+  }
+
+  canPasteFromMenu(): boolean {
+    return Boolean(this.yankBuffer?.blocks.length) && !this.createBusy();
+  }
+
+  confirmRenameBlock(event: MouseEvent): void {
+    event.stopPropagation();
+    const positioned = this.contextMenu()?.positioned;
+    this.closeContextMenu();
+    if (positioned) {
+      this.beginRenameBlock(positioned);
+    }
+  }
+
+  confirmCopyBlock(event: MouseEvent): void {
+    event.stopPropagation();
+    const block = this.contextMenu()?.positioned?.block;
+    this.closeContextMenu();
+    if (block?.eventId) {
+      this.storeYankBuffer([block]);
+    }
+  }
+
+  confirmPasteBlock(event: MouseEvent): void {
+    event.stopPropagation();
+    this.closeContextMenu();
+    this.hideTooltip();
+    this.pasteFromBuffer();
   }
 
   blockTrackKey(positioned: PositionedBlock): string {
@@ -1211,7 +1335,7 @@ export class TimelineChartComponent {
       this.cancelPendingFirstG();
     }
 
-    if (this.pendingFirstDTimer !== null && event.key !== 'd' && !this.isDeleteOperatorMotionKey(event)) {
+    if (this.deleteOperatorArmed && event.key !== 'd' && !this.isDeleteOperatorMotionKey(event) && !this.isModifierOnlyKey(event)) {
       this.cancelPendingFirstD();
     }
 
@@ -1225,11 +1349,9 @@ export class TimelineChartComponent {
 
     // Don't clear a pending count when the user is in the middle of typing a shifted command
     // (e.g. "3" then press Shift, then "J").
-    const isModifierKey =
-      event.key === 'Shift' || event.key === 'Alt' || event.key === 'Control' || event.key === 'Meta';
     if (
       this.pendingMotionCount &&
-      !isModifierKey &&
+      !this.isModifierOnlyKey(event) &&
       !this.isMotionCountDigit(event.key) &&
       !this.preservesMotionCountKey(event)
     ) {
@@ -2059,8 +2181,15 @@ export class TimelineChartComponent {
     if (!positioned) {
       return;
     }
+    this.beginRenameBlock(positioned);
+  }
 
+  private beginRenameBlock(positioned: PositionedBlock): void {
     const block = positioned.block;
+    if (!this.blockIsEditable(block) || !block.eventId) {
+      return;
+    }
+
     this.cancelActivityLabel();
     this.cancelActivityRename();
     this.closeContextMenu();
@@ -2338,7 +2467,7 @@ export class TimelineChartComponent {
     this.deleteEditableBlocks([positioned.block], event);
   }
 
-  private findEditableBlockAtCursor(): PositionedBlock | null {
+  private findBlockAtCursor(): PositionedBlock | null {
     const cursorMin = this.insertCursorMin();
     const viewDate = this.date();
     const minutesOnView = (iso: string, vd: string) =>
@@ -2346,12 +2475,11 @@ export class TimelineChartComponent {
     const hits: PositionedBlock[] = [];
 
     for (const positioned of this.renderBlocks()) {
-      const block = positioned.block;
-      if (!this.blockIsEditable(block) || !block.eventId) {
-        continue;
-      }
-
-      const { startMin, endMin } = visibleBlockIntervalMinutes(block, viewDate, minutesOnView);
+      const { startMin, endMin } = visibleBlockIntervalMinutes(
+        positioned.block,
+        viewDate,
+        minutesOnView
+      );
       if (cursorMin < startMin || cursorMin >= endMin - 0.01) {
         continue;
       }
@@ -2371,6 +2499,18 @@ export class TimelineChartComponent {
       return bStart - aStart;
     });
     return hits[0];
+  }
+
+  private findEditableBlockAtCursor(): PositionedBlock | null {
+    const positioned = this.findBlockAtCursor();
+    if (!positioned) {
+      return null;
+    }
+    const block = positioned.block;
+    if (!this.blockIsEditable(block) || !block.eventId) {
+      return null;
+    }
+    return positioned;
   }
 
   private deleteSelectedBlocks(event: KeyboardEvent): void {
@@ -2636,21 +2776,44 @@ export class TimelineChartComponent {
     if (normalized === 'd' && this.pendingMotionCount.length > 0) {
       return true;
     }
-    if (this.pendingFirstDTimer !== null && this.isDeleteOperatorMotionKey(event)) {
+    if (this.deleteOperatorArmed && this.isDeleteOperatorMotionKey(event)) {
       return true;
     }
     return false;
+  }
+
+  private isModifierOnlyKey(event: KeyboardEvent): boolean {
+    return (
+      event.key === 'Shift' ||
+      event.key === 'Alt' ||
+      event.key === 'Control' ||
+      event.key === 'Meta'
+    );
+  }
+
+  private isGoToDayEndKey(event: KeyboardEvent): boolean {
+    if (event.ctrlKey || event.metaKey || event.altKey) {
+      return false;
+    }
+    return event.key === 'G' || (event.key === 'g' && event.shiftKey);
+  }
+
+  private isGoToDayStartKey(event: KeyboardEvent): boolean {
+    if (event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) {
+      return false;
+    }
+    return event.key === 'g';
   }
 
   private isDeleteOperatorMotionKey(event: KeyboardEvent): boolean {
     if (event.ctrlKey || event.metaKey || event.altKey) {
       return false;
     }
-    const key = event.key.toLowerCase();
-    if (key === 'w' || key === 'b' || key === 'e' || key === 'j' || key === 'k' || key === 'g') {
+    if (this.isGoToDayEndKey(event)) {
       return true;
     }
-    if (event.key === 'G') {
+    const key = event.key.toLowerCase();
+    if (key === 'w' || key === 'b' || key === 'e' || key === 'j' || key === 'k' || key === 'g') {
       return true;
     }
     if (event.key === '{' || event.key === '}') {
@@ -3119,20 +3282,14 @@ export class TimelineChartComponent {
   }
 
   private handleGoToScrollKey(event: KeyboardEvent): boolean {
-    if (this.pendingFirstDTimer !== null && !this.deleteOperatorBlocked()) {
-      if (event.key === 'G') {
+    if (this.deleteOperatorArmed && !this.deleteOperatorBlocked()) {
+      if (this.isGoToDayEndKey(event)) {
         event.preventDefault();
         this.executeDeleteMotion('G', event);
         return true;
       }
 
-      if (
-        event.key === 'g' &&
-        !event.shiftKey &&
-        !event.ctrlKey &&
-        !event.metaKey &&
-        !event.altKey
-      ) {
+      if (this.isGoToDayStartKey(event)) {
         event.preventDefault();
         if (event.repeat) {
           return true;
@@ -3148,7 +3305,7 @@ export class TimelineChartComponent {
       }
     }
 
-    if (event.key === 'G') {
+    if (this.isGoToDayEndKey(event)) {
       this.cancelPendingFirstG();
       this.cancelPendingFirstZ();
       if (this.visualSelectMode()) {
@@ -3170,7 +3327,7 @@ export class TimelineChartComponent {
       return true;
     }
 
-    if (event.key !== 'g' || event.shiftKey || event.ctrlKey || event.metaKey || event.altKey) {
+    if (!this.isGoToDayStartKey(event)) {
       return false;
     }
 
@@ -3221,7 +3378,7 @@ export class TimelineChartComponent {
   }
 
   private handleDeleteOperatorMotionKey(event: KeyboardEvent): boolean {
-    if (this.pendingFirstDTimer === null || this.deleteOperatorBlocked()) {
+    if (!this.deleteOperatorArmed || this.deleteOperatorBlocked()) {
       return false;
     }
 
@@ -3241,9 +3398,13 @@ export class TimelineChartComponent {
 
   private deleteOperatorMotionFromKey(
     event: KeyboardEvent
-  ): 'w' | 'b' | 'e' | 'j' | 'k' | '{' | '}' | null {
+  ): 'w' | 'b' | 'e' | 'j' | 'k' | '{' | '}' | 'G' | null {
     if (event.ctrlKey || event.metaKey || event.altKey) {
       return null;
+    }
+
+    if (this.isGoToDayEndKey(event)) {
+      return 'G';
     }
 
     if (event.key === '{') {
@@ -3316,9 +3477,9 @@ export class TimelineChartComponent {
         return endMin === null ? [] : this.editableBlocksInOpenRange(startMin, endMin);
       }
       case 'gg':
-        return this.editableBlocksInOpenRange(0, startMin);
+        return this.editableBlocksInInclusiveRange(0, startMin);
       case 'G':
-        return this.editableBlocksInOpenRange(startMin, MINUTES_PER_DAY);
+        return this.editableBlocksInInclusiveRange(startMin, MINUTES_PER_DAY);
       case 'j':
         return this.editableBlocksForVerticalDelete(startMin, count, 1, prefixed);
       case 'k':
@@ -3351,6 +3512,25 @@ export class TimelineChartComponent {
       return [];
     }
 
+    return this.collectEditableBlocksInRange(rangeLo, rangeHi, 'open');
+  }
+
+  /** Blocks overlapping [lo, hi] inclusive — used for `dgg` / `dG`. */
+  private editableBlocksInInclusiveRange(lo: number, hi: number): TimelineBlock[] {
+    const rangeLo = Math.min(lo, hi);
+    const rangeHi = Math.max(lo, hi);
+    if (rangeHi < rangeLo - 0.01) {
+      return [];
+    }
+
+    return this.collectEditableBlocksInRange(rangeLo, rangeHi, 'inclusive');
+  }
+
+  private collectEditableBlocksInRange(
+    rangeLo: number,
+    rangeHi: number,
+    boundary: 'open' | 'inclusive'
+  ): TimelineBlock[] {
     const viewDate = this.date();
     const minutesOnView = (iso: string, vd: string) =>
       minutesOnViewDate(iso, vd, this.timezone());
@@ -3365,7 +3545,11 @@ export class TimelineChartComponent {
       }
 
       const { startMin, endMin } = visibleBlockIntervalMinutes(block, viewDate, minutesOnView);
-      if (startMin >= rangeHi - 0.01 || endMin <= rangeLo + 0.01) {
+      const overlaps =
+        boundary === 'inclusive'
+          ? startMin < rangeHi + 0.01 && endMin > rangeLo - 0.01
+          : startMin < rangeHi - 0.01 && endMin > rangeLo + 0.01;
+      if (!overlaps) {
         continue;
       }
 
@@ -3519,15 +3703,23 @@ export class TimelineChartComponent {
     this.cancelPendingFirstY();
     this.cancelPendingFirstZ();
 
+    this.pasteFromBuffer();
+    return true;
+  }
+
+  private pasteFromBuffer(pasteStartMin = this.insertCursorMin()): void {
+    if (!this.yankBuffer?.blocks.length || this.createBusy()) {
+      return;
+    }
+
     const drafts = buildPasteDraftsFromYank(
       this.yankBuffer,
       this.date(),
-      this.insertCursorMin()
+      pasteStartMin
     );
     if (drafts.length > 0) {
       this.activitiesCreate.emit(drafts);
     }
-    return true;
   }
 
   private pasteBlocked(): boolean {
@@ -3641,6 +3833,7 @@ export class TimelineChartComponent {
       return true;
     }
 
+    this.deleteOperatorArmed = true;
     this.pendingFirstDTimer = setTimeout(() => {
       this.pendingFirstDTimer = null;
     }, DD_SEQUENCE_MS);
@@ -3689,6 +3882,7 @@ export class TimelineChartComponent {
   }
 
   private cancelPendingFirstD(): void {
+    this.deleteOperatorArmed = false;
     if (this.pendingFirstDTimer !== null) {
       clearTimeout(this.pendingFirstDTimer);
       this.pendingFirstDTimer = null;

@@ -37,6 +37,7 @@
           role="list"
           aria-label="Activity timeline"
           (pointerdown)="onCanvasPointerDown($event)"
+          (contextmenu)="onCanvasContextMenu($event)"
         >
           @for (guide of hourGuides(); track guide.hour) {
             <div class="day-calendar__hour-line-wrap" [style.top.%]="guide.topPct">
@@ -71,7 +72,7 @@
                 (pointerdown)="onBlockPointerDown($event, positioned)"
                 (contextmenu)="onBlockContextMenu($event, positioned)"
                 (mouseenter)="showBlockTooltip(positioned, $event)"
-                (mouseleave)="hideTooltip()"
+                (mouseleave)="onBlockMouseLeave()"
                 [attr.aria-label]="categoryLabels[positioned.block.category] + ', ' + formatTimeRange(positioned.block)"
               >
                 <span
@@ -112,7 +113,7 @@
                 [attr.aria-selected]="isBlockSelected(positioned)"
                 (pointerdown)="onBlockPointerDown($event, positioned)"
                 (mouseenter)="showBlockTooltip(positioned, $event)"
-                (mouseleave)="hideTooltip()"
+                (mouseleave)="onBlockMouseLeave()"
                 [attr.aria-label]="categoryLabels[positioned.block.category] + ', ' + formatTimeRange(positioned.block)"
               >
                 <span class="day-calendar__event-title">{{ positioned.block.activity }}</span>
@@ -270,14 +271,44 @@
       [style.top.px]="menu.y"
       (click)="$event.stopPropagation()"
     >
+      @if (menu.positioned) {
+        <button
+          type="button"
+          class="day-calendar__context-menu-item"
+          role="menuitem"
+          (click)="confirmRenameBlock($event)"
+        >
+          Rename
+        </button>
+        <button
+          type="button"
+          class="day-calendar__context-menu-item"
+          role="menuitem"
+          (click)="confirmCopyBlock($event)"
+        >
+          Copy
+        </button>
+      }
       <button
         type="button"
-        class="day-calendar__context-menu-item day-calendar__context-menu-item--danger"
+        class="day-calendar__context-menu-item"
         role="menuitem"
-        (click)="confirmDeleteBlock($event)"
+        [disabled]="!canPasteFromMenu()"
+        (click)="confirmPasteBlock($event)"
       >
-        Delete
+        Paste
       </button>
+      @if (menu.positioned) {
+        <div class="day-calendar__context-menu-separator" role="separator"></div>
+        <button
+          type="button"
+          class="day-calendar__context-menu-item day-calendar__context-menu-item--danger"
+          role="menuitem"
+          (click)="confirmDeleteBlock($event)"
+        >
+          Delete
+        </button>
+      }
     </div>
   }
 
@@ -288,11 +319,11 @@
       [style.top.px]="tip.y"
     >
       <div class="day-calendar__tooltip-head">
-        <strong>{{ tip.category }}</strong>
+        <strong>{{ tip.activity }}</strong>
         <span class="day-calendar__tooltip-duration">{{ tip.duration }}</span>
       </div>
+      <span class="day-calendar__tooltip-line">{{ tip.category }}</span>
       <span class="day-calendar__tooltip-line">{{ tip.timeRange }}</span>
-      <span class="day-calendar__tooltip-line">{{ tip.activity }}</span>
     </div>
   }
 </section>
