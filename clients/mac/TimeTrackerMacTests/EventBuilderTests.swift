@@ -17,6 +17,7 @@ final class EventBuilderTests: XCTestCase {
         XCTAssertEqual(event?.durationSec, 120)
         XCTAssertEqual(event?.metadata?["bundleId"], "com.example.cursor")
         XCTAssertEqual(event?.metadata?["sourceClient"], "mac-tracker")
+        XCTAssertEqual(event?.metadata?["localDate"], EventBuilder.localDateString(from: start))
         XCTAssertTrue(event?.timestamp.hasSuffix("Z") ?? false)
     }
 
@@ -31,5 +32,36 @@ final class EventBuilderTests: XCTestCase {
         let formatted = EventBuilder.iso8601UTC(date)
         XCTAssertTrue(formatted.contains("."))
         XCTAssertTrue(formatted.hasSuffix("Z"))
+    }
+}
+
+final class BrowserFilterTests: XCTestCase {
+    func testSkipsKnownBrowsersByBundleId() {
+        XCTAssertTrue(BrowserFilter.shouldSkip(bundleId: "com.brave.Browser", appName: "Brave Browser"))
+        XCTAssertTrue(BrowserFilter.shouldSkip(bundleId: "com.google.Chrome", appName: "Google Chrome"))
+        XCTAssertTrue(BrowserFilter.shouldSkip(bundleId: "com.apple.Safari", appName: "Safari"))
+    }
+
+    func testSkipsKnownBrowsersByAppNameWhenBundleIdMissing() {
+        XCTAssertTrue(BrowserFilter.shouldSkip(bundleId: nil, appName: "Brave Browser"))
+        XCTAssertTrue(BrowserFilter.shouldSkip(bundleId: nil, appName: "Google Chrome"))
+    }
+
+    func testDoesNotSkipNonBrowsers() {
+        XCTAssertFalse(BrowserFilter.shouldSkip(bundleId: "com.todesktop.230313mzl4w4u92", appName: "Cursor"))
+        XCTAssertFalse(BrowserFilter.shouldSkip(bundleId: "md.obsidian", appName: "Obsidian"))
+        XCTAssertFalse(BrowserFilter.shouldSkip(bundleId: nil, appName: "Slack"))
+    }
+}
+
+final class SystemAppFilterTests: XCTestCase {
+    func testSkipsLoginWindow() {
+        XCTAssertTrue(SystemAppFilter.shouldSkip(bundleId: "com.apple.loginwindow", appName: "loginwindow"))
+        XCTAssertTrue(SystemAppFilter.shouldSkip(bundleId: nil, appName: "loginwindow"))
+    }
+
+    func testDoesNotSkipRegularApps() {
+        XCTAssertFalse(SystemAppFilter.shouldSkip(bundleId: "com.todesktop.230313mzl4w4u92", appName: "Cursor"))
+        XCTAssertFalse(SystemAppFilter.shouldSkip(bundleId: nil, appName: "Slack"))
     }
 }

@@ -2,6 +2,7 @@ import SwiftUI
 
 struct LoginView: View {
     @ObservedObject var appState: AppState
+    @Environment(\.dismiss) private var dismiss
 
     @State private var email = "demo@timetracker.test"
     @State private var password = "Demo1234!"
@@ -47,7 +48,7 @@ struct LoginView: View {
         Task {
             do {
                 try await appState.login(email: email, password: password)
-                appState.showLoginSheet = false
+                dismiss()
             } catch {
                 errorMessage = error.localizedDescription
             }

@@ -94,6 +94,43 @@ describe('aggregationService', () => {
     assert.equal(hour10.blocks[0].end, `${DATE}T10:03:00.000Z`);
   });
 
+  it('coalesces extension events with a short gap or overlap', () => {
+    const events = [
+      {
+        id: 'ext-a',
+        userId: USER,
+        timestamp: `${DATE}T10:05:17.196Z`,
+        type: 'domain_visit',
+        app: 'Chrome',
+        domain: 'localhost',
+        durationSec: 20,
+      },
+      {
+        id: 'ext-b',
+        userId: USER,
+        timestamp: `${DATE}T10:05:38.398Z`,
+        type: 'domain_visit',
+        app: 'Chrome',
+        domain: 'localhost',
+        durationSec: 16,
+      },
+      {
+        id: 'ext-c',
+        userId: USER,
+        timestamp: `${DATE}T10:05:54.248Z`,
+        type: 'domain_visit',
+        app: 'Chrome',
+        domain: 'localhost',
+        durationSec: 7,
+      },
+    ];
+
+    const hour10 = aggregateTimeline(events, DATE, { userId: USER, timezone: 'UTC' }).hours[10];
+    assert.equal(hour10.blocks.length, 1);
+    assert.equal(hour10.blocks[0].activity, 'localhost');
+    assert.equal(hour10.blocks[0].durationSec, 44);
+  });
+
   it('keeps distinct stored events separate even when activity matches', () => {
     const events = [
       {

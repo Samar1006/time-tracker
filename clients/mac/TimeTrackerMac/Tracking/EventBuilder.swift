@@ -11,7 +11,10 @@ enum EventBuilder {
         let durationSec = Int(interval.elapsed(until: endedAt).rounded())
         guard durationSec >= minimumDurationSec else { return nil }
 
-        var metadata: [String: String] = ["sourceClient": "mac-tracker"]
+        var metadata: [String: String] = [
+            "sourceClient": "mac-tracker",
+            "localDate": localDateString(from: interval.startedAt),
+        ]
         if let bundleId = interval.bundleId {
             metadata["bundleId"] = bundleId
         }
@@ -29,6 +32,15 @@ enum EventBuilder {
     static func iso8601UTC(_ date: Date) -> String {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter.string(from: date)
+    }
+
+    static func localDateString(from date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar.current
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone.current
+        formatter.dateFormat = "yyyy-MM-dd"
         return formatter.string(from: date)
     }
 }

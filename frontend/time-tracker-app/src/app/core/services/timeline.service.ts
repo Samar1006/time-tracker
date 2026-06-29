@@ -1,6 +1,6 @@
 import { HttpClient, HttpParams } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
-import { Observable } from 'rxjs';
+import { Observable, of } from 'rxjs';
 
 import { environment } from '../../../environments/environment';
 import { MonthSummaryResponse, TimelineResponse } from '../models/timeline.model';
@@ -77,6 +77,18 @@ export class TimelineService {
 
   createEvent(payload: CreateEventPayload): Observable<CreateEventResponse> {
     return this.http.post<CreateEventResponse>(`${environment.apiUrl}/api/events`, payload);
+  }
+
+  createEvents(payloads: CreateEventPayload[]): Observable<CreateEventResponse> {
+    if (payloads.length === 0) {
+      return of({ accepted: 0, ids: [] });
+    }
+    if (payloads.length === 1) {
+      return this.createEvent(payloads[0]);
+    }
+    return this.http.post<CreateEventResponse>(`${environment.apiUrl}/api/events`, {
+      events: payloads
+    });
   }
 
   categorizeActivity(text: string): Observable<CategorizeActivityResponse> {

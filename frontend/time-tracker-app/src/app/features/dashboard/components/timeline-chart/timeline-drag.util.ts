@@ -67,6 +67,19 @@ export interface EventCreateDraft {
   };
 }
 
+/** One block slice stored by vim-style yank (position relative to first yanked block). */
+export interface YankedBlock {
+  title: string;
+  durationSec: number;
+  category: string;
+  confidence?: number;
+  offsetStartMin: number;
+}
+
+export interface YankBuffer {
+  blocks: YankedBlock[];
+}
+
 /** Round to nearest 15-minute grid (9:07 → 9:00, 9:08 → 9:15). */
 export function snapMinutes(minutes: number): number {
   return Math.round(minutes / SNAP_MINUTES) * SNAP_MINUTES;
@@ -168,6 +181,59 @@ export function buildCreateEventDraft(
       localDate: viewDate
     }
   };
+}
+
+export function buildYankBufferFromBlocks(
+  blocks: TimelineBlock[],
+  viewDate: string,
+  minutesOnViewDate: (iso: string, viewDate: string) => number
+): YankBuffer | null {
+  const sorted = blocks
+    .map((block) => ({
+      block,
+      interval: visibleBlockIntervalMinutes(block, viewDate, minutesOnViewDate)
+    }))
+    .filter(({ interval }) => interval.endMin > interval.startMin + 0.01)
+    .sort((a, b) => a.interval.startMin - b.interval.startMin);
+
+  if (sorted.length === 0) {
+    return null;
+  }
+
+  const anchorStart = sorted[0].interval.startMin;
+  const yanked: YankedBlock[] = sorted.map(({ block, interval }) => ({
+    title: block.activity,
+    durationSec: Math.max(60, Math.round((interval.endMin - interval.startMin) * 60)),
+    category: block.category,
+    confidence: block.confidence,
+    offsetStartMin: interval.startMin - anchorStart
+  }));
+
+  return { blocks: yanked };
+}
+
+export function buildPasteDraftsFromYank(
+  buffer: YankBuffer,
+  viewDate: string,
+  pasteStartMin: number
+): EventCreateDraft[] {
+  return buffer.blocks.map((yanked) => {
+    const startMin = pasteStartMin + yanked.offsetStartMin;
+    const endMin = startMin + yanked.durationSec / 60;
+    const clamped = clampIntervalToDay(startMin, endMin);
+    return {
+      timestamp: localTimestamp(viewDate, clamped.startMin),
+      type: 'manual',
+      title: yanked.title,
+      durationSec: Math.round((clamped.endMin - clamped.startMin) * 60),
+      metadata: {
+        category: yanked.category,
+        confidence: yanked.confidence,
+        sourceClient: 'dashboard-yank',
+        localDate: viewDate
+      }
+    };
+  });
 }
 
 /** Visible slice on the viewed day (matches layoutVerticalBlocks clipping). */

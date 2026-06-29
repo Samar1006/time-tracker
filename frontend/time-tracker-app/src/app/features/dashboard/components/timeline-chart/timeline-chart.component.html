@@ -37,6 +37,7 @@
           role="list"
           aria-label="Activity timeline"
           (pointerdown)="onCanvasPointerDown($event)"
+          (contextmenu)="onCanvasContextMenu($event)"
         >
           @for (guide of hourGuides(); track guide.hour) {
             <div class="day-calendar__hour-line-wrap" [style.top.%]="guide.topPct">
@@ -65,12 +66,13 @@
                 [class.day-calendar__event--continues-next-day]="blockContinuesNextDay(positioned.block)"
                 [class.day-calendar__event--continues-prev-day]="blockContinuesFromPrevDay(positioned.block)"
                 [class.day-calendar__event--selected]="isBlockSelected(positioned)"
+                [class.day-calendar__event--yank-flash]="isBlockYankFlashing(positioned)"
                 [class.day-calendar__event--drag-source]="isDraggingBlock(positioned)"
                 [attr.aria-selected]="isBlockSelected(positioned)"
                 (pointerdown)="onBlockPointerDown($event, positioned)"
                 (contextmenu)="onBlockContextMenu($event, positioned)"
                 (mouseenter)="showBlockTooltip(positioned, $event)"
-                (mouseleave)="hideTooltip()"
+                (mouseleave)="onBlockMouseLeave()"
                 [attr.aria-label]="categoryLabels[positioned.block.category] + ', ' + formatTimeRange(positioned.block)"
               >
                 <span
@@ -107,10 +109,11 @@
                 [class.day-calendar__event--continues-next-day]="blockContinuesNextDay(positioned.block)"
                 [class.day-calendar__event--continues-prev-day]="blockContinuesFromPrevDay(positioned.block)"
                 [class.day-calendar__event--selected]="isBlockSelected(positioned)"
+                [class.day-calendar__event--yank-flash]="isBlockYankFlashing(positioned)"
                 [attr.aria-selected]="isBlockSelected(positioned)"
                 (pointerdown)="onBlockPointerDown($event, positioned)"
                 (mouseenter)="showBlockTooltip(positioned, $event)"
-                (mouseleave)="hideTooltip()"
+                (mouseleave)="onBlockMouseLeave()"
                 [attr.aria-label]="categoryLabels[positioned.block.category] + ', ' + formatTimeRange(positioned.block)"
               >
                 <span class="day-calendar__event-title">{{ positioned.block.activity }}</span>
@@ -231,19 +234,31 @@
             </div>
           }
 
-          <div
-            class="day-calendar__insert-cursor"
-            [class.day-calendar__insert-cursor--active]="insertMode()"
-            [style.top.%]="insertCursorTopPct()"
-            [attr.aria-label]="'Cursor at ' + insertCursorLabel()"
-          >
-            <span
-              class="day-calendar__insert-cursor-label"
-              [class.day-calendar__insert-cursor-label--active]="insertMode()"
+          @if (currentTimeIndicator(); as nowLine) {
+            <div
+              class="day-calendar__half-hour-line-wrap"
+              [style.top.%]="nowLine.topPct"
+              [attr.aria-label]="'Current time ' + nowLine.label"
             >
-              {{ insertCursorLabel() }}
-            </span>
-          </div>
+              <div class="day-calendar__half-hour-line day-calendar__half-hour-line--now" aria-hidden="true"></div>
+            </div>
+          }
+
+          @if (vimMotionsEnabled() && showInsertCursor()) {
+            <div
+              class="day-calendar__insert-cursor"
+              [class.day-calendar__insert-cursor--active]="insertMode()"
+              [style.top.%]="insertCursorTopPct()"
+              [attr.aria-label]="'Cursor at ' + insertCursorLabel()"
+            >
+              <span
+                class="day-calendar__insert-cursor-label"
+                [class.day-calendar__insert-cursor-label--active]="insertMode()"
+              >
+                {{ insertCursorLabel() }}
+              </span>
+            </div>
+          }
         </div>
       </div>
     </div>
@@ -266,14 +281,44 @@
       [style.top.px]="menu.y"
       (click)="$event.stopPropagation()"
     >
+      @if (menu.positioned) {
+        <button
+          type="button"
+          class="day-calendar__context-menu-item"
+          role="menuitem"
+          (click)="confirmRenameBlock($event)"
+        >
+          Rename
+        </button>
+        <button
+          type="button"
+          class="day-calendar__context-menu-item"
+          role="menuitem"
+          (click)="confirmCopyBlock($event)"
+        >
+          Copy
+        </button>
+      }
       <button
         type="button"
-        class="day-calendar__context-menu-item day-calendar__context-menu-item--danger"
+        class="day-calendar__context-menu-item"
         role="menuitem"
-        (click)="confirmDeleteBlock($event)"
+        [disabled]="!canPasteFromMenu()"
+        (click)="confirmPasteBlock($event)"
       >
-        Delete
+        Paste
       </button>
+      @if (menu.positioned) {
+        <div class="day-calendar__context-menu-separator" role="separator"></div>
+        <button
+          type="button"
+          class="day-calendar__context-menu-item day-calendar__context-menu-item--danger"
+          role="menuitem"
+          (click)="confirmDeleteBlock($event)"
+        >
+          Delete
+        </button>
+      }
     </div>
   }
 
@@ -284,11 +329,11 @@
       [style.top.px]="tip.y"
     >
       <div class="day-calendar__tooltip-head">
-        <strong>{{ tip.category }}</strong>
+        <strong>{{ tip.activity }}</strong>
         <span class="day-calendar__tooltip-duration">{{ tip.duration }}</span>
       </div>
+      <span class="day-calendar__tooltip-line">{{ tip.category }}</span>
       <span class="day-calendar__tooltip-line">{{ tip.timeRange }}</span>
-      <span class="day-calendar__tooltip-line">{{ tip.activity }}</span>
     </div>
   }
 </section>

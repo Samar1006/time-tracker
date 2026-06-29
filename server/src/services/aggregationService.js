@@ -1,6 +1,7 @@
 // aggregationService.js — bucket raw events into hour-by-hour timeline blocks.
 
 import { categorizeDomain, categorizeText } from './categorizationService.js';
+import { isMacTrackerBrowserFocus } from './browserFilter.js';
 
 const MS_PER_SEC = 1000;
 
@@ -246,7 +247,38 @@ function mergeKey(slice) {
 function blocksAreAdjacent(a, b) {
   if (a.end === b.start) return true;
   const gapMs = Date.parse(b.start) - Date.parse(a.end);
-  return gapMs >= 0 && gapMs <= 1000;
+  return gapMs >= 0 && gapMs <= 3000;
+}
+
+function trackedBlocksCanCoalesce(last, block) {
+  if (last.source !== 'tracked' || block.source !== 'tracked') return false;
+  if (last.activity !== block.activity || last.category !== block.category) return false;
+
+  const lastStart = Date.parse(last.start);
+  const lastEnd = Date.parse(last.end);
+  const blockStart = Date.parse(block.start);
+  const blockEnd = Date.parse(block.end);
+
+  if (blocksAreAdjacent(last, block)) return true;
+  return blockStart < lastEnd && blockEnd > lastStart;
+}
+
+function mergeTrackedBlocks(last, block) {
+  const lastStart = Date.parse(last.start);
+  const lastEnd = Date.parse(last.end);
+  const blockStart = Date.parse(block.start);
+  const blockEnd = Date.parse(block.end);
+  const mergedStart = Math.min(lastStart, blockStart);
+  const mergedEnd = Math.max(lastEnd, blockEnd);
+
+  last.start = new Date(mergedStart).toISOString();
+  last.end = new Date(mergedEnd).toISOString();
+  last.durationSec = Math.round((mergedEnd - mergedStart) / 1000);
+
+  const lastEventEnd = last.eventEnd ? Date.parse(last.eventEnd) : lastEnd;
+  const blockEventEnd = block.eventEnd ? Date.parse(block.eventEnd) : blockEnd;
+  last.eventEnd = new Date(Math.max(lastEventEnd, blockEventEnd)).toISOString();
+  last.eventStart = last.eventStart ?? last.start;
 }
 
 /** Merge back-to-back tracked events (e.g. Chrome extension 1-min flushes) into one block. */
@@ -256,17 +288,8 @@ function coalesceAdjacentTrackedBlocks(blocks) {
 
   for (const block of sorted) {
     const last = merged.at(-1);
-    if (
-      last &&
-      last.source === 'tracked' &&
-      block.source === 'tracked' &&
-      last.activity === block.activity &&
-      last.category === block.category &&
-      blocksAreAdjacent(last, block)
-    ) {
-      last.end = block.end;
-      last.durationSec += block.durationSec;
-      last.eventEnd = block.eventEnd ?? block.end;
+    if (last && trackedBlocksCanCoalesce(last, block)) {
+      mergeTrackedBlocks(last, block);
     } else {
       merged.push({ ...block });
     }
@@ -294,6 +317,7 @@ export function aggregateTimeline(events, date, { userId, timezone = 'UTC' } = {
   const merged = new Map();
 
   for (const event of events) {
+    if (isMacTrackerBrowserFocus(event)) continue;
     for (const slice of splitEventAcrossHours(event, date, timezone)) {
       const key = mergeKey(slice);
       const existing = merged.get(key);

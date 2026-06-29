@@ -7,6 +7,7 @@ import {
   CategoryContextService,
   CategoryPreference
 } from '../../../../core/services/category-context.service';
+import { TimelineKeyboardSettingsService } from '../../../../core/services/timeline-keyboard-settings.service';
 import { CATEGORY_COLORS } from '../../../../core/constants/categories';
 import { AppShellComponent } from '../../../../shared/layouts/app-shell/app-shell.component';
 
@@ -19,21 +20,31 @@ import { AppShellComponent } from '../../../../shared/layouts/app-shell/app-shel
 export class SettingsComponent {
   private readonly auth = inject(AuthService);
   private readonly categoryContext = inject(CategoryContextService);
+  private readonly keyboardSettings = inject(TimelineKeyboardSettingsService);
 
   readonly userId = this.auth.user;
   readonly categoryColors = CATEGORY_COLORS;
   readonly preferences = signal<CategoryPreference[]>(this.categoryContext.load());
+  readonly vimMotionsEnabled = this.keyboardSettings.vimMotionsEnabled;
   readonly saved = signal(false);
+
+  setVimMotionsEnabled(enabled: boolean): void {
+    this.keyboardSettings.setVimMotionsEnabled(enabled);
+    this.flashSaved();
+  }
 
   save(): void {
     this.categoryContext.save(this.preferences());
-    this.saved.set(true);
-    setTimeout(() => this.saved.set(false), 2500);
+    this.flashSaved();
   }
 
   reset(): void {
     this.preferences.set(this.categoryContext.getDefaults());
     this.categoryContext.save(this.preferences());
+    this.flashSaved();
+  }
+
+  private flashSaved(): void {
     this.saved.set(true);
     setTimeout(() => this.saved.set(false), 2500);
   }

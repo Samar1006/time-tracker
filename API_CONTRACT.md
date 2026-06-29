@@ -209,6 +209,8 @@ Optional request field: `referenceDate` (ISO 8601) — anchor for resolving “t
 }
 ```
 
+**Ingest filtering:** macOS tracker (`metadata.sourceClient === "mac-tracker"`) `app_focus` events for known browsers (Safari, Chrome, Brave, Firefox, Edge, Arc, etc.) are **silently dropped** on ingest. The Chrome extension owns per-domain tracking for those apps, so duplicate browser focus rows are not stored. The response still returns `201`; `accepted` and `ids` reflect only storable events (dropped events are not counted). Timeline aggregation also omits any mac-tracker browser focus already in storage.
+
 **Errors:** `401` (missing/invalid token), `403` (body `userId` ≠ token user), `400` (missing fields), `503` (Redis unavailable when `REDIS_URL` set but down)
 
 **Redis key:** `events:{userId}:{YYYY-MM-DD}` — list of JSON strings
