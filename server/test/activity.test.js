@@ -2,6 +2,7 @@ import { describe, it, before, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { request, startTestServer, stopTestServer, loginDemo, bearer } from './helpers/http.js';
 import { resetMemoryStore } from '../src/services/redisClient.js';
+import { appendEvents } from '../src/services/activityStore.js';
 
 const DATE = '2026-06-20';
 const USER = 'user-demo-1';
@@ -194,6 +195,123 @@ describe('activity routes (API contract)', () => {
     assert.equal(timeline.status, 200);
     assert.equal(timeline.body.userId, USER);
     assert.equal(timeline.body.hours[10].blocks[0].source, 'tracked');
+  });
+
+  it('UTC-stored Mac events appear on the correct local calendar day', async () => {
+    const ingest = await request('/api/events', {
+      method: 'POST',
+      headers: bearer(token),
+      body: {
+        timestamp: '2026-06-26T05:28:00.000Z',
+        type: 'app_focus',
+        app: 'Obsidian',
+        durationSec: 120,
+        metadata: { sourceClient: 'mac-tracker' },
+      },
+    });
+    assert.equal(ingest.status, 201);
+
+    const timeline = await request('/api/timeline?date=2026-06-25&timezone=America/Los_Angeles', {
+      headers: bearer(token),
+    });
+    assert.equal(timeline.status, 200);
+    const obsidian = timeline.body.hours.flatMap((h) => h.blocks).find((b) => b.activity === 'Obsidian');
+    assert.ok(obsidian, 'expected Obsidian block on June 25 LA view');
+    assert.equal(obsidian.source, 'tracked');
+  });
+
+  it('drops mac-tracker app_focus for browsers on ingest and timeline', async () => {
+    const ingest = await request('/api/events', {
+      method: 'POST',
+      headers: bearer(token),
+      body: {
+        timestamp: `${DATE}T15:00:00.000Z`,
+        type: 'app_focus',
+        app: 'Brave Browser',
+        durationSec: 120,
+        metadata: { sourceClient: 'mac-tracker', bundleId: 'com.brave.Browser', localDate: DATE },
+      },
+    });
+    assert.equal(ingest.status, 201);
+    assert.equal(ingest.body.accepted, 0);
+
+    const cursor = await request('/api/events', {
+      method: 'POST',
+      headers: bearer(token),
+      body: {
+        timestamp: `${DATE}T15:30:00.000Z`,
+        type: 'app_focus',
+        app: 'Cursor',
+        durationSec: 120,
+        metadata: { sourceClient: 'mac-tracker', localDate: DATE },
+      },
+    });
+    assert.equal(cursor.status, 201);
+    assert.equal(cursor.body.accepted, 1);
+
+    const timeline = await request(`/api/timeline?date=${DATE}&timezone=UTC`, {
+      headers: bearer(token),
+    });
+    assert.equal(timeline.status, 200);
+    const activities = timeline.body.hours.flatMap((h) => h.blocks).map((b) => b.activity);
+    assert.ok(!activities.includes('Brave Browser'));
+    assert.ok(activities.includes('Cursor'));
+  });
+
+  it('still stores chrome-extension domain visits alongside mac app filtering', async () => {
+    const ingest = await request('/api/events', {
+      method: 'POST',
+      headers: bearer(token),
+      body: {
+        events: [
+          {
+            timestamp: `${DATE}T16:00:00.000Z`,
+            type: 'app_focus',
+            app: 'Brave Browser',
+            durationSec: 60,
+            metadata: { sourceClient: 'mac-tracker', bundleId: 'com.brave.Browser' },
+          },
+          {
+            timestamp: `${DATE}T16:05:00.000Z`,
+            type: 'domain_visit',
+            app: 'Chrome',
+            domain: 'example.com',
+            durationSec: 60,
+            metadata: { sourceClient: 'chrome-extension', localDate: DATE },
+          },
+        ],
+      },
+    });
+    assert.equal(ingest.status, 201);
+    assert.equal(ingest.body.accepted, 1);
+
+    const raw = await request(`/api/events?date=${DATE}`, { headers: bearer(token) });
+    assert.equal(raw.body.count, 1);
+
+    const timeline = await request(`/api/timeline?date=${DATE}&timezone=UTC`, {
+      headers: bearer(token),
+    });
+    const activities = timeline.body.hours.flatMap((h) => h.blocks).map((b) => b.activity);
+    assert.ok(activities.includes('example.com'));
+    assert.ok(!activities.includes('Brave Browser'));
+  });
+
+  it('omits mac-tracker browser events already in storage from timeline', async () => {
+    await appendEvents(USER, DATE, [{
+      id: 'evt_brave_legacy',
+      userId: USER,
+      timestamp: `${DATE}T17:00:00.000Z`,
+      type: 'app_focus',
+      app: 'Brave Browser',
+      durationSec: 300,
+      metadata: { sourceClient: 'mac-tracker', bundleId: 'com.brave.Browser' },
+    }]);
+
+    const timeline = await request(`/api/timeline?date=${DATE}&timezone=UTC`, {
+      headers: bearer(token),
+    });
+    const activities = timeline.body.hours.flatMap((h) => h.blocks).map((b) => b.activity);
+    assert.ok(!activities.includes('Brave Browser'));
   });
 
   it('overnight voice event on start day appears on both timelines', async () => {

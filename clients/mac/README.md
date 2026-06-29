@@ -71,6 +71,9 @@ JWT tokens are stored in the Keychain (service: `time-tracker`, account: user em
 - On app switch: closes the previous focus interval and starts a new one
 - Every 60 seconds: flushes the current interval (so long sessions are posted without waiting for a switch)
 - Each completed interval becomes one `app_focus` event with `durationSec`
+- **Browsers are skipped** (Safari, Chrome, Brave, Firefox, Edge, Arc, etc.) — the Chrome extension already tracks domains inside those apps
+- **System UI is skipped** (`loginwindow`, screen saver) — lock screen is not counted as activity
+- **Sleep is ignored** — tracking pauses when the Mac sleeps and resumes on wake (sleep time is never logged)
 - Events are batch-posted to `POST /api/events` with `Authorization: Bearer <token>`
 - No `userId` in the request body — the server derives it from the JWT
 

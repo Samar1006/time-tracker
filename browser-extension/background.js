@@ -185,12 +185,40 @@ function startSession(tab) {
     return;
   }
 
+  if (currentSession && currentSession.domain === domain) {
+    currentSession.url = tab.url;
+    currentSession.title = tab.title || domain;
+    return;
+  }
+
   currentSession = {
     url: tab.url,
     domain,
     title: tab.title || domain,
     startedAt: Date.now(),
   };
+}
+
+async function handleActiveTabChange(tab, reason) {
+  if (!tab?.url || !isTrackableUrl(tab.url)) {
+    await flushSession(reason);
+    return;
+  }
+
+  const domain = normalizeDomain(tab.url);
+  if (!domain) {
+    await flushSession(reason);
+    return;
+  }
+
+  if (currentSession?.domain === domain) {
+    currentSession.url = tab.url;
+    currentSession.title = tab.title || domain;
+    return;
+  }
+
+  await flushSession(reason);
+  startSession(tab);
 }
 
 async function syncActiveTab() {
@@ -221,10 +249,9 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 });
 
 chrome.tabs.onActivated.addListener(async ({ tabId }) => {
-  await flushSession('tab_switch');
   try {
     const tab = await chrome.tabs.get(tabId);
-    startSession(tab);
+    await handleActiveTabChange(tab, 'tab_switch');
   } catch {
     currentSession = null;
   }
@@ -232,9 +259,18 @@ chrome.tabs.onActivated.addListener(async ({ tabId }) => {
 
 chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
   if (!tab.active) return;
-  if (changeInfo.url || changeInfo.status === 'complete') {
-    await flushSession('tab_update');
-    startSession(tab);
+
+  if (changeInfo.url) {
+    await handleActiveTabChange(tab, 'tab_navigate');
+    return;
+  }
+
+  if (changeInfo.status === 'complete') {
+    if (!currentSession) {
+      startSession(tab);
+    } else {
+      currentSession.title = tab.title || currentSession.domain;
+    }
   }
 });
 

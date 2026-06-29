@@ -23,6 +23,7 @@ import {
   addDaysISO,
   localDateString,
 } from '../services/aggregationService.js';
+import { isMacTrackerBrowserFocus } from '../services/browserFilter.js';
 import { isUserEditableEvent } from '../services/eventEditability.js';
 import { getStorageMode } from '../services/redisClient.js';
 import { sampleActivityEvents } from '../data/sampleActivityEvents.js';
@@ -105,14 +106,28 @@ function eventStorageDate(event) {
   return parseDateOnly(event.timestamp);
 }
 
-/** Events stored on the previous day that spill into `date` (overnight spans). */
+/** Load stored events that overlap a local calendar day (handles UTC storage buckets). */
 async function loadTimelineEvents(userId, date, timezone) {
-  const events = await loadEvents(userId, date);
-  const prevDate = addDaysISO(date, -1);
-  const prevDay = await loadEvents(userId, prevDate);
-  const carryover = prevDay.filter((e) => eventOverlapsLocalDate(e, date, timezone));
+  const tz = timezone || 'UTC';
+
+  if (tz === 'UTC') {
+    const events = await loadEvents(userId, date);
+    const prevDate = addDaysISO(date, -1);
+    const prevDay = await loadEvents(userId, prevDate);
+    const carryover = prevDay.filter((e) => eventOverlapsLocalDate(e, date, tz));
+    const byId = new Map();
+    for (const e of [...carryover, ...events]) byId.set(e.id, e);
+    return [...byId.values()];
+  }
+
+  const datesToScan = [addDaysISO(date, -1), date, addDaysISO(date, 1)];
   const byId = new Map();
-  for (const e of [...carryover, ...events]) byId.set(e.id, e);
+  for (const storageDate of datesToScan) {
+    const dayEvents = await loadEvents(userId, storageDate);
+    for (const e of dayEvents) {
+      if (eventOverlapsLocalDate(e, date, tz)) byId.set(e.id, e);
+    }
+  }
   return [...byId.values()];
 }
 
@@ -165,8 +180,10 @@ router.post('/events', requireAuth, async (req, res, next) => {
       normalized.push(classifyStoredEvent(result));
     }
 
+    const storable = normalized.filter((event) => !isMacTrackerBrowserFocus(event));
+
     const byDay = new Map();
-    for (const event of normalized) {
+    for (const event of storable) {
       const date = eventStorageDate(event);
       if (!date) {
         return res.status(400).json({ error: 'Each event timestamp must include a calendar date.' });
@@ -182,7 +199,7 @@ router.post('/events', requireAuth, async (req, res, next) => {
     }
 
     res.status(201).json({
-      accepted: normalized.length,
+      accepted: storable.length,
       ids,
       storage: getStorageMode(),
     });

@@ -22,6 +22,7 @@ import {
 } from '../../../../core/constants/categories';
 import { ActivityCategory, TimelineBlock, TimelineHour } from '../../../../core/models/timeline.model';
 import { TimelineKeyboardSettingsService } from '../../../../core/services/timeline-keyboard-settings.service';
+import { TimelineViewportStorageService } from '../../../../core/services/timeline-viewport-storage.service';
 import { formatDuration, formatHourLabel } from '../../../../core/utils/duration.util';
 import { DayDateNavComponent } from '../../../../shared/components/day-date-nav/day-date-nav.component';
 import {
@@ -154,10 +155,21 @@ function minutesOnViewDate(iso: string, viewDate: string, timeZone: string): num
   return hour * MINUTES_PER_HOUR + minute + second / 60;
 }
 
+/** Round a fractional minute value to the nearest second (for cursor/block motion). */
+function roundMinuteToSecond(min: number): number {
+  return Math.round(min * 60) / 60;
+}
+
 function blocksAreContiguous(a: TimelineBlock, b: TimelineBlock): boolean {
   if (a.end === b.start) return true;
   const gapMs = Date.parse(b.start) - Date.parse(a.end);
-  return gapMs >= 0 && gapMs <= 1000;
+  if (gapMs >= 0 && gapMs <= 3000) return true;
+
+  const aStart = Date.parse(a.start);
+  const aEnd = Date.parse(a.end);
+  const bStart = Date.parse(b.start);
+  const bEnd = Date.parse(b.end);
+  return bStart < aEnd && bEnd > aStart;
 }
 
 function blocksShouldCoalesce(a: TimelineBlock, b: TimelineBlock): boolean {
@@ -233,8 +245,16 @@ function mergeContiguousBlocks(blocks: TimelineBlock[]): TimelineBlock[] {
   for (const block of sorted) {
     const last = merged.at(-1);
     if (last && blocksShouldCoalesce(last, block)) {
-      last.end = block.end;
-      last.durationSec += block.durationSec;
+      const lastStart = Date.parse(last.start);
+      const lastEnd = Date.parse(last.end);
+      const blockStart = Date.parse(block.start);
+      const blockEnd = Date.parse(block.end);
+      const mergedStart = Math.min(lastStart, blockStart);
+      const mergedEnd = Math.max(lastEnd, blockEnd);
+
+      last.start = new Date(mergedStart).toISOString();
+      last.end = new Date(mergedEnd).toISOString();
+      last.durationSec = Math.round((mergedEnd - mergedStart) / 1000);
       last.eventEnd = block.eventEnd ?? block.end;
       last.eventId = block.eventId ?? last.eventId;
       last.spansNextDay = block.spansNextDay ?? last.spansNextDay;
@@ -359,14 +379,18 @@ function layoutIntervalMinutes(
 }
 
 /**
- * Overlapping events share horizontal space side-by-side (Apple Calendar day view).
- * Each event keeps its full height; only the column index changes when times overlap.
+ * Side-by-side columns only when blocks cover the exact same interval (second precision).
+ * Sequential use within the same minute keeps full width instead of splitting columns.
  */
 function intervalsOverlap(
   a: { startMin: number; endMin: number },
   b: { startMin: number; endMin: number }
 ): boolean {
-  return a.startMin < b.endMin - 0.01 && a.endMin > b.startMin + 0.01;
+  const startSec = (interval: { startMin: number; endMin: number }) =>
+    Math.round(interval.startMin * 60);
+  const endSec = (interval: { startMin: number; endMin: number }) =>
+    Math.round(interval.endMin * 60);
+  return startSec(a) === startSec(b) && endSec(a) === endSec(b);
 }
 
 function overlapCluster<T extends LayoutInterval>(item: T, items: readonly T[]): T[] {
@@ -549,6 +573,7 @@ interface PendingBlockInteraction {
 })
 export class TimelineChartComponent {
   private readonly keyboardSettings = inject(TimelineKeyboardSettingsService);
+  private readonly viewportStorage = inject(TimelineViewportStorageService);
   readonly vimMotionsEnabled = this.keyboardSettings.vimMotionsEnabled;
 
   readonly hours = input.required<TimelineHour[]>();
@@ -592,6 +617,8 @@ export class TimelineChartComponent {
   private scrollRestorePending = false;
   private pendingDateChange = false;
   private pendingDate = '';
+  /** When true, h/l day nav keeps zoom, scroll, and cursor instead of loading per-day storage. */
+  private carryViewportAcrossDayChange = false;
   private readonly pendingReselectTargetDate = signal<string | null>(null);
 
   readonly zoomScale = signal(DEFAULT_ZOOM);
@@ -615,6 +642,23 @@ export class TimelineChartComponent {
     () => (this.insertCursorMin() / MINUTES_PER_DAY) * 100
   );
   readonly insertCursorLabel = computed(() => this.formatCursorTime(this.insertCursorMin()));
+  /** Ticks periodically so the current-time line advances on today's view. */
+  private readonly nowTick = signal(0);
+  readonly currentTimeIndicator = computed(() => {
+    this.nowTick();
+    const viewDate = this.date();
+    const tz = this.timezone();
+    const nowIso = new Date().toISOString();
+    if (localDayKey(nowIso, tz) !== viewDate) {
+      return null;
+    }
+
+    const minutes = minutesOnViewDate(nowIso, viewDate, tz);
+    return {
+      topPct: (minutes / MINUTES_PER_DAY) * 100,
+      label: this.formatCursorTime(Math.round(minutes))
+    };
+  });
   readonly showInsertCursor = computed(() => {
     if (this.insertMode()) {
       return true;
@@ -640,6 +684,11 @@ export class TimelineChartComponent {
     return this.buildInsertGhostPreview(anchor, this.insertCursorMin());
   });
   private cursorInitialized = false;
+  /** True when scroll/cursor for the current date were loaded from local storage. */
+  private restoredDateViewport = false;
+  private persistViewportTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Set after first successful viewport hydration so cursor init does not clobber storage. */
+  private readonly viewportHydrated = signal(false);
   readonly selectedBlockKeys = signal<Set<string>>(new Set());
   /** Stable across layout/date changes; used to keep selection after h/l day moves. */
   readonly selectedEventIds = signal<Set<string>>(new Set());
@@ -680,6 +729,10 @@ export class TimelineChartComponent {
   private pendingFirstDTimer: ReturnType<typeof setTimeout> | null = null;
   /** True after the first `d` in a delete operator (e.g. `dw`, `dG`); cleared on motion or cancel. */
   private deleteOperatorArmed = false;
+  /** True after the first `y` until a yank motion completes or is cancelled. */
+  private yOperatorArmed = false;
+  /** True after `i`/`a` in a text-object command (e.g. `dip`, `yap`). */
+  private textObjectPrefixArmed = false;
   private pendingFirstYTimer: ReturnType<typeof setTimeout> | null = null;
   private pendingFirstZTimer: ReturnType<typeof setTimeout> | null = null;
   private pendingMotionCount = '';
@@ -747,6 +800,16 @@ export class TimelineChartComponent {
   readonly renderBlocks = computed(() => this.frozenPositionedBlocks() ?? this.positionedBlocks());
 
   constructor() {
+    const savedZoom = this.viewportStorage.getZoom();
+    if (savedZoom !== null) {
+      this.zoomScale.set(savedZoom);
+    }
+
+    const refreshNowTick = () => this.nowTick.set(Date.now());
+    refreshNowTick();
+    const nowLineTimer = setInterval(refreshNowTick, 30_000);
+    this.destroyRef.onDestroy(() => clearInterval(nowLineTimer));
+
     effect(() => {
       if (this.patchError()) {
         this.pendingReselectTargetDate.set(null);
@@ -809,21 +872,22 @@ export class TimelineChartComponent {
     });
 
     effect(() => {
-      if (!this.keyboardSettings.vimMotionsEnabled()) {
+      if (this.viewportHydrated()) {
         return;
       }
       const el = this.scrollContainer()?.nativeElement;
-      if (!el || this.cursorInitialized) {
+      if (!el) {
         return;
       }
-      untracked(() => {
-        try {
-          this.setCursorToNowAndScroll(el);
-          this.cursorInitialized = true;
-        } catch {
-          // required inputs may not be ready yet
-        }
-      });
+      untracked(() => this.hydrateViewport(el));
+    });
+
+    effect(() => {
+      if (!this.viewportHydrated()) {
+        return;
+      }
+      this.insertCursorMin();
+      untracked(() => this.persistCursorViewport());
     });
 
     effect(() => {
@@ -848,6 +912,17 @@ export class TimelineChartComponent {
         if (!this.pendingReselectTargetDate()) {
           this.clearSelection();
         }
+        untracked(() => {
+          this.flushDateViewport(this.stableDate);
+          if (this.carryViewportAcrossDayChange) {
+            this.carryViewportAcrossDayChange = false;
+            this.restoredDateViewport = true;
+            this.persistScrollViewport(date);
+            this.persistCursorViewport(date);
+          } else {
+            this.restoreDateViewportToMemory(date);
+          }
+        });
         this.exitInsertMode();
         this.cancelActivityRename();
         this.scrollRestorePending = true;
@@ -901,6 +976,11 @@ export class TimelineChartComponent {
     });
 
     this.destroyRef.onDestroy(() => {
+      this.flushAllViewportState();
+      if (this.persistViewportTimer !== null) {
+        clearTimeout(this.persistViewportTimer);
+        this.persistViewportTimer = null;
+      }
       this.teardownPendingBlockListeners();
       this.cancelPendingFirstG();
       this.cancelPendingFirstZ();
@@ -919,13 +999,12 @@ export class TimelineChartComponent {
 
       const syncViewport = () => {
         this.scrollViewportHeight.set(el.clientHeight);
-        this.clampZoomToViewport();
+        this.clampZoomToViewport(false);
       };
 
       syncViewport();
       this.scrollResizeObserver = new ResizeObserver(syncViewport);
       this.scrollResizeObserver.observe(el);
-      this.saveScrollViewport(el);
 
       const onScroll = () => {
         this.saveScrollViewport(el);
@@ -936,14 +1015,12 @@ export class TimelineChartComponent {
       el.addEventListener('scroll', onScroll, { passive: true });
       this.destroyRef.onDestroy(() => el.removeEventListener('scroll', onScroll));
 
-      if (!this.cursorInitialized && this.keyboardSettings.vimMotionsEnabled()) {
-        // First paint: set cursor to current time and scroll it into view.
-        try {
-          this.setCursorToNowAndScroll(el);
-          this.cursorInitialized = true;
-        } catch {
-          // required inputs may not be ready yet; the cursor will initialize on a later render/scroll
-        }
+      const onPageHide = () => this.flushAllViewportState();
+      window.addEventListener('pagehide', onPageHide);
+      this.destroyRef.onDestroy(() => window.removeEventListener('pagehide', onPageHide));
+
+      if (!this.viewportHydrated()) {
+        this.hydrateViewport(el);
       }
     });
 
@@ -960,7 +1037,7 @@ export class TimelineChartComponent {
       this.scrollRestorePending = false;
 
       if (this.pendingDateChange) {
-        this.restoreScrollViewport(container);
+        this.applyRestoredScroll(container);
         this.stableDate = this.pendingDate;
         this.cancelActivityLabel();
         const targetDate = this.pendingReselectTargetDate();
@@ -980,9 +1057,8 @@ export class TimelineChartComponent {
   }
 
   private saveScrollViewport(el: HTMLElement): void {
-    const maxTop = el.scrollHeight - el.clientHeight;
-    this.savedScrollTop = el.scrollTop;
-    this.savedScrollRatio = maxTop > 0 ? el.scrollTop / maxTop : 0;
+    this.captureScrollViewport(el);
+    this.schedulePersistScrollViewport();
   }
 
   private restoreScrollViewport(el: HTMLElement): void {
@@ -992,6 +1068,111 @@ export class TimelineChartComponent {
       return;
     }
     el.scrollTop = Math.min(maxTop, Math.max(0, this.savedScrollRatio * maxTop));
+  }
+
+  private applyRestoredScroll(el: HTMLElement): void {
+    this.restoreScrollViewport(el);
+    requestAnimationFrame(() => {
+      this.restoreScrollViewport(el);
+      requestAnimationFrame(() => this.restoreScrollViewport(el));
+    });
+  }
+
+  private hydrateViewport(el: HTMLElement): void {
+    if (this.viewportHydrated()) {
+      return;
+    }
+
+    this.restoreDateViewportToMemory(this.date());
+    this.scrollViewportHeight.set(el.clientHeight);
+    this.clampZoomToViewport(false);
+
+    if (this.restoredDateViewport) {
+      this.applyRestoredScroll(el);
+      this.scrollRestorePending = true;
+      this.cursorInitialized = true;
+    } else if (!this.cursorInitialized && this.keyboardSettings.vimMotionsEnabled()) {
+      try {
+        this.setCursorToNowAndScroll(el);
+        this.cursorInitialized = true;
+      } catch {
+        // inputs may not be ready yet; a later hydration attempt will retry
+        return;
+      }
+    } else {
+      this.cursorInitialized = true;
+    }
+
+    this.viewportHydrated.set(true);
+    this.captureScrollViewport(el);
+    this.persistScrollViewport();
+    this.viewportStorage.setZoom(this.zoomScale());
+  }
+
+  private captureScrollViewport(el: HTMLElement): void {
+    const maxTop = el.scrollHeight - el.clientHeight;
+    this.savedScrollTop = el.scrollTop;
+    this.savedScrollRatio = maxTop > 0 ? el.scrollTop / maxTop : 0;
+  }
+
+  private flushAllViewportState(): void {
+    const el = this.scrollContainer()?.nativeElement;
+    if (el) {
+      this.captureScrollViewport(el);
+    }
+    if (this.persistViewportTimer !== null) {
+      clearTimeout(this.persistViewportTimer);
+      this.persistViewportTimer = null;
+    }
+    this.persistScrollViewport();
+    this.persistCursorViewport();
+    this.viewportStorage.setZoom(this.zoomScale());
+  }
+
+  private restoreDateViewportToMemory(date: string): void {
+    const saved = this.viewportStorage.getDateViewport(date);
+    if (!saved) {
+      this.restoredDateViewport = false;
+      return;
+    }
+    this.savedScrollRatio = saved.scrollRatio;
+    this.insertCursorMin.set(saved.cursorMin);
+    this.restoredDateViewport = true;
+  }
+
+  private persistCursorViewport(date = this.date()): void {
+    this.viewportStorage.patchDateViewport(date, {
+      cursorMin: this.insertCursorMin()
+    });
+  }
+
+  private persistScrollViewport(date = this.date()): void {
+    this.viewportStorage.patchDateViewport(date, {
+      scrollRatio: this.savedScrollRatio
+    });
+  }
+
+  private schedulePersistScrollViewport(): void {
+    if (this.persistViewportTimer !== null) {
+      clearTimeout(this.persistViewportTimer);
+    }
+    this.persistViewportTimer = setTimeout(() => {
+      this.persistViewportTimer = null;
+      this.persistScrollViewport();
+    }, 200);
+  }
+
+  private flushDateViewport(date = this.date()): void {
+    const el = this.scrollContainer()?.nativeElement;
+    if (el) {
+      this.captureScrollViewport(el);
+    }
+    if (this.persistViewportTimer !== null) {
+      clearTimeout(this.persistViewportTimer);
+      this.persistViewportTimer = null;
+    }
+    this.persistScrollViewport(date);
+    this.persistCursorViewport(date);
   }
 
   formatBlockDuration(seconds: number): string {
@@ -1187,6 +1368,7 @@ export class TimelineChartComponent {
     const eventId = block?.eventId;
     this.closeContextMenu();
     if (eventId && block) {
+      this.storeYankBuffer([block], false);
       this.blockDelete.emit({
         eventId,
         restore: buildRestorePayloadFromBlock(block, this.date())
@@ -1251,6 +1433,10 @@ export class TimelineChartComponent {
 
     if (!this.keyboardSettings.vimMotionsEnabled()) {
       this.handleStandardTimelineKeydown(event);
+      return;
+    }
+
+    if (this.handleTextObjectKey(event)) {
       return;
     }
 
@@ -1335,11 +1521,11 @@ export class TimelineChartComponent {
       this.cancelPendingFirstG();
     }
 
-    if (this.deleteOperatorArmed && event.key !== 'd' && !this.isDeleteOperatorMotionKey(event) && !this.isModifierOnlyKey(event)) {
+    if (this.deleteOperatorArmed && event.key !== 'd' && !this.isDeleteOperatorMotionKey(event) && !this.isTextObjectOperatorKey(event) && !this.isModifierOnlyKey(event)) {
       this.cancelPendingFirstD();
     }
 
-    if (this.pendingFirstYTimer !== null && event.key !== 'y') {
+    if ((this.pendingFirstYTimer !== null || this.yOperatorArmed) && event.key !== 'y' && !this.isTextObjectOperatorKey(event)) {
       this.cancelPendingFirstY();
     }
 
@@ -1372,6 +1558,8 @@ export class TimelineChartComponent {
         this.exitVisualSelectMode(true);
         return;
       }
+      this.cancelPendingFirstD();
+      this.cancelPendingFirstY();
       this.clearPendingMotionCount();
       this.clearSelection();
       return;
@@ -2525,17 +2713,7 @@ export class TimelineChartComponent {
       return;
     }
 
-    event.preventDefault();
-    this.closeContextMenu();
-    this.hideTooltip();
-
-    const viewDate = this.date();
-    const payloads = deletable.map((block) => ({
-      eventId: block.eventId!,
-      restore: buildRestorePayloadFromBlock(block, viewDate)
-    }));
-    this.blocksDelete.emit(payloads);
-    this.clearSelection();
+    this.deleteEditableBlocks(deletable, event);
   }
 
   private nudgeSelectedBlocks(deltaMin: number, event: KeyboardEvent, smoothScroll = false): void {
@@ -2764,6 +2942,20 @@ export class TimelineChartComponent {
     return normalized === 'w' || normalized === 'b' || normalized === 'e';
   }
 
+  private isTextObjectOperatorKey(event: KeyboardEvent): boolean {
+    if (event.ctrlKey || event.metaKey || event.altKey) {
+      return false;
+    }
+    const key = event.key.toLowerCase();
+    if (key === 'i' || key === 'a') {
+      return this.deleteOperatorArmed || this.yOperatorArmed;
+    }
+    if (key === 'p') {
+      return (this.deleteOperatorArmed || this.yOperatorArmed) && this.textObjectPrefixArmed;
+    }
+    return false;
+  }
+
   /** Keys that may follow a numeric prefix (e.g. 3w, 3ge, 3dw). */
   private preservesMotionCountKey(event: KeyboardEvent): boolean {
     if (this.isJKKey(event.key) || this.isBlockMotionKey(event.key)) {
@@ -2882,6 +3074,28 @@ export class TimelineChartComponent {
     return this.getSelectedBlocks().some((block) => this.blockIsEditable(block) && block.eventId);
   }
 
+  private selectedNudgeableBlocksInterval(): { startMin: number; endMin: number } | null {
+    const blocks = this.getSelectedBlocks().filter(
+      (block) => this.blockIsEditable(block) && block.eventId
+    );
+    if (blocks.length === 0) {
+      return null;
+    }
+
+    const viewDate = this.date();
+    const minutesOnView = (iso: string, vd: string) =>
+      minutesOnViewDate(iso, vd, this.timezone());
+
+    let startMin = MINUTES_PER_DAY;
+    let endMin = 0;
+    for (const block of blocks) {
+      const interval = visibleBlockIntervalMinutes(block, viewDate, minutesOnView);
+      startMin = Math.min(startMin, interval.startMin);
+      endMin = Math.max(endMin, interval.endMin);
+    }
+    return { startMin, endMin };
+  }
+
   private navigateDay(action: 'prev' | 'next', event: KeyboardEvent): void {
     if (this.blocksKeyboardBlocked()) {
       return;
@@ -2896,6 +3110,7 @@ export class TimelineChartComponent {
     this.closeContextMenu();
     this.hideTooltip();
 
+    this.carryViewportAcrossDayChange = true;
     if (action === 'prev') {
       this.prevDay.emit();
     } else {
@@ -2932,6 +3147,7 @@ export class TimelineChartComponent {
       return;
     }
 
+    this.carryViewportAcrossDayChange = true;
     this.pendingReselectTargetDate.set(targetDate);
     const movedIds = changes
       .map((change) => change.next.eventId)
@@ -2964,7 +3180,6 @@ export class TimelineChartComponent {
 
   private moveCursorToMinutes(minutes: number): void {
     this.insertCursorMin.set(this.snapCursorMinutes(minutes, 1));
-
     const el = this.scrollContainer()?.nativeElement;
     if (el) {
       this.scrollToKeepCursorVisible(el);
@@ -2974,7 +3189,6 @@ export class TimelineChartComponent {
   private cursorMotionBlocked(): boolean {
     return (
       this.blocksKeyboardBlocked() ||
-      this.insertMode() ||
       this.visualSelectMode() ||
       this.hasNudgeableSelection()
     );
@@ -2985,12 +3199,24 @@ export class TimelineChartComponent {
     const minutesOnView = (iso: string, vd: string) =>
       minutesOnViewDate(iso, vd, this.timezone());
 
-    return this.renderBlocks()
+    const intervals = this.renderBlocks()
       .map((positioned) =>
         visibleBlockIntervalMinutes(positioned.block, viewDate, minutesOnView)
       )
       .filter((interval) => interval.endMin > interval.startMin + 0.01)
       .sort((a, b) => a.startMin - b.startMin || a.endMin - b.endMin);
+
+    const seen = new Set<string>();
+    const deduped: { startMin: number; endMin: number }[] = [];
+    for (const interval of intervals) {
+      const key = `${roundMinuteToSecond(interval.startMin)}|${roundMinuteToSecond(interval.endMin)}`;
+      if (seen.has(key)) {
+        continue;
+      }
+      seen.add(key);
+      deduped.push(interval);
+    }
+    return deduped;
   }
 
   private blockIndexContainingCursor(
@@ -3020,12 +3246,18 @@ export class TimelineChartComponent {
     switch (motion) {
       case 'w': {
         if (containing >= 0) {
-          const next = blocks[containing + 1];
-          return next ? Math.round(next.startMin) : null;
+          for (let index = containing + 1; index < blocks.length; index += 1) {
+            const start = roundMinuteToSecond(blocks[index].startMin);
+            if (start > roundMinuteToSecond(cursorMin) + 0.01) {
+              return start;
+            }
+          }
+          return null;
         }
         for (const block of blocks) {
-          if (block.startMin > cursorMin + 0.01) {
-            return Math.round(block.startMin);
+          const start = roundMinuteToSecond(block.startMin);
+          if (start > roundMinuteToSecond(cursorMin) + 0.01) {
+            return start;
           }
         }
         return null;
@@ -3033,49 +3265,57 @@ export class TimelineChartComponent {
       case 'b': {
         if (containing >= 0) {
           const current = blocks[containing];
-          if (cursorMin > current.startMin + 0.01) {
-            return Math.round(current.startMin);
+          const currentStart = roundMinuteToSecond(current.startMin);
+          if (roundMinuteToSecond(cursorMin) > currentStart + 0.01) {
+            return currentStart;
           }
         }
         let previousStart: number | null = null;
         for (const block of blocks) {
-          if (block.startMin >= cursorMin - 0.01) {
+          const start = roundMinuteToSecond(block.startMin);
+          if (start >= roundMinuteToSecond(cursorMin) - 0.01) {
             break;
           }
-          previousStart = block.startMin;
+          previousStart = start;
         }
-        return previousStart === null ? null : Math.round(previousStart);
+        return previousStart;
       }
       case 'e': {
         if (containing >= 0) {
           const current = blocks[containing];
-          if (cursorMin < current.endMin - 0.01) {
-            return Math.round(current.endMin);
+          const currentEnd = roundMinuteToSecond(current.endMin);
+          if (roundMinuteToSecond(cursorMin) < currentEnd - 0.01) {
+            return currentEnd;
           }
         }
         for (const block of blocks) {
-          if (block.endMin > cursorMin + 0.01) {
-            return Math.round(block.endMin);
+          const end = roundMinuteToSecond(block.endMin);
+          if (end > roundMinuteToSecond(cursorMin) + 0.01) {
+            return end;
           }
         }
         return null;
       }
       case 'ge': {
         if (containing >= 0) {
-          if (containing === 0) {
-            return null;
+          for (let index = containing - 1; index >= 0; index -= 1) {
+            const end = roundMinuteToSecond(blocks[index].endMin);
+            if (end < roundMinuteToSecond(cursorMin) - 0.01) {
+              return end;
+            }
           }
-          return Math.round(blocks[containing - 1].endMin);
+          return null;
         }
         let previousEnd: number | null = null;
         for (const block of blocks) {
-          if (block.endMin <= cursorMin + 0.01) {
-            previousEnd = block.endMin;
+          const end = roundMinuteToSecond(block.endMin);
+          if (end <= roundMinuteToSecond(cursorMin) + 0.01) {
+            previousEnd = end;
           } else {
             break;
           }
         }
-        return previousEnd === null ? null : Math.round(previousEnd);
+        return previousEnd;
       }
     }
   }
@@ -3085,19 +3325,19 @@ export class TimelineChartComponent {
       return false;
     }
 
+    const consumed = this.consumeMotionCount();
+    const count = consumed.prefixed ? consumed.count : 1;
+
     event.preventDefault();
     this.closeContextMenu();
     this.hideTooltip();
-    this.clearPendingMotionCount();
     this.cancelPendingFirstD();
     this.cancelPendingFirstZ();
 
-    const consumed = this.consumeMotionCount();
-    const count = consumed.prefixed ? consumed.count : 1;
     let cursor = this.insertCursorMin();
 
     for (let step = 0; step < count; step += 1) {
-      const target = this.cursorBlockMotionTarget(motion);
+      const target = this.cursorBlockMotionTarget(motion, cursor);
       if (target === null || target === cursor) {
         break;
       }
@@ -3268,6 +3508,27 @@ export class TimelineChartComponent {
     this.cancelPendingFirstG();
     this.cancelPendingFirstD();
     this.cancelPendingFirstZ();
+
+    if (this.hasNudgeableSelection() && !this.visualSelectMode()) {
+      const interval = this.selectedNudgeableBlocksInterval();
+      if (interval) {
+        const refMin = direction === 'prev' ? interval.startMin : interval.endMin;
+        const target =
+          direction === 'prev'
+            ? this.previousGapStartMinutes(refMin)
+            : this.nextGapStartMinutes(refMin);
+        if (target !== null) {
+          const delta = target - interval.startMin;
+          if (delta !== 0) {
+            this.nudgeSelectedBlocks(delta, event, true);
+            this.insertCursorMin.update((cursor) =>
+              Math.min(MINUTES_PER_DAY, Math.max(0, Math.round(cursor + delta)))
+            );
+          }
+        }
+      }
+      return true;
+    }
 
     const cursor = this.insertCursorMin();
     const target =
@@ -3611,6 +3872,7 @@ export class TimelineChartComponent {
     event.preventDefault();
     this.closeContextMenu();
     this.hideTooltip();
+    this.storeYankBuffer(blocks, false);
 
     const viewDate = this.date();
     const payloads = blocks.map((block) => ({
@@ -3677,10 +3939,228 @@ export class TimelineChartComponent {
       return true;
     }
 
+    this.yOperatorArmed = true;
     this.pendingFirstYTimer = setTimeout(() => {
       this.pendingFirstYTimer = null;
     }, DD_SEQUENCE_MS);
     return true;
+  }
+
+  private handleTextObjectKey(event: KeyboardEvent): boolean {
+    if (event.ctrlKey || event.metaKey || event.altKey) {
+      return false;
+    }
+
+    const key = event.key.toLowerCase();
+    if (key === 'p' && this.textObjectPrefixArmed) {
+      if (this.deleteOperatorArmed) {
+        if (this.deleteOperatorBlocked()) {
+          return false;
+        }
+        event.preventDefault();
+        if (event.repeat) {
+          return true;
+        }
+        this.executeParagraphTextObject('delete', event);
+        return true;
+      }
+
+      if (this.yOperatorArmed) {
+        if (
+          this.blocksKeyboardBlocked() ||
+          this.insertMode() ||
+          this.visualSelectMode() ||
+          this.hasNudgeableSelection()
+        ) {
+          return false;
+        }
+        event.preventDefault();
+        if (event.repeat) {
+          return true;
+        }
+        this.executeParagraphTextObject('yank', event);
+        return true;
+      }
+
+      this.textObjectPrefixArmed = false;
+      return false;
+    }
+
+    if (key !== 'i' && key !== 'a') {
+      return false;
+    }
+
+    if (!this.deleteOperatorArmed && !this.yOperatorArmed) {
+      return false;
+    }
+
+    if (this.deleteOperatorArmed && this.deleteOperatorBlocked()) {
+      return false;
+    }
+
+    if (
+      this.yOperatorArmed &&
+      (this.blocksKeyboardBlocked() ||
+        this.insertMode() ||
+        this.visualSelectMode() ||
+        this.hasNudgeableSelection())
+    ) {
+      return false;
+    }
+
+    event.preventDefault();
+    if (event.repeat) {
+      return true;
+    }
+
+    this.textObjectPrefixArmed = true;
+    return true;
+  }
+
+  private executeParagraphTextObject(action: 'delete' | 'yank', event: KeyboardEvent): void {
+    this.cancelPendingFirstD();
+    this.cancelPendingFirstY();
+    this.cancelPendingFirstG();
+    this.cancelPendingFirstZ();
+    this.textObjectPrefixArmed = false;
+    this.closeContextMenu();
+    this.hideTooltip();
+
+    const consumed = this.consumeMotionCount();
+    const count = consumed.prefixed ? consumed.count : 1;
+    const blocks = this.editableBlocksForParagraphMotion(this.insertCursorMin(), count);
+    if (blocks.length === 0) {
+      return;
+    }
+
+    if (action === 'delete') {
+      this.deleteEditableBlocks(blocks, event);
+      return;
+    }
+
+    this.storeYankBuffer(blocks);
+  }
+
+  /** Touching blocks on the view day form one paragraph; gaps break paragraphs. */
+  private paragraphGroupsAtView(): { editableBlocks: TimelineBlock[]; startMin: number; endMin: number }[] {
+    const viewDate = this.date();
+    const minutesOnView = (iso: string, vd: string) =>
+      minutesOnViewDate(iso, vd, this.timezone());
+
+    type Item = { block: TimelineBlock; startMin: number; endMin: number };
+    const items: Item[] = [];
+
+    for (const positioned of this.renderBlocks()) {
+      const { startMin, endMin } = visibleBlockIntervalMinutes(
+        positioned.block,
+        viewDate,
+        minutesOnView
+      );
+      if (endMin <= startMin + 0.01) {
+        continue;
+      }
+      items.push({ block: positioned.block, startMin, endMin });
+    }
+
+    items.sort((a, b) => a.startMin - b.startMin || a.endMin - b.endMin);
+
+    const rawGroups: Item[][] = [];
+    let current: Item[] = [];
+    for (const item of items) {
+      if (current.length === 0) {
+        current.push(item);
+        continue;
+      }
+
+      const last = current[current.length - 1];
+      if (item.startMin <= last.endMin + 0.01) {
+        current.push(item);
+      } else {
+        rawGroups.push(current);
+        current = [item];
+      }
+    }
+    if (current.length > 0) {
+      rawGroups.push(current);
+    }
+
+    const groups: { editableBlocks: TimelineBlock[]; startMin: number; endMin: number }[] = [];
+    for (const group of rawGroups) {
+      const startMin = Math.min(...group.map((item) => item.startMin));
+      const endMin = Math.max(...group.map((item) => item.endMin));
+      const seen = new Set<string>();
+      const editableBlocks: TimelineBlock[] = [];
+
+      for (const item of group) {
+        const block = item.block;
+        const eventId = block.eventId;
+        if (!this.blockIsEditable(block) || !eventId || seen.has(eventId)) {
+          continue;
+        }
+        seen.add(eventId);
+        editableBlocks.push(block);
+      }
+
+      if (editableBlocks.length > 0) {
+        groups.push({ editableBlocks, startMin, endMin });
+      }
+    }
+
+    return groups;
+  }
+
+  private paragraphIndexAtCursor(
+    cursorMin: number,
+    groups: { startMin: number; endMin: number }[]
+  ): number {
+    const containing = groups.findIndex(
+      (group) => cursorMin >= group.startMin - 0.01 && cursorMin <= group.endMin + 0.01
+    );
+    if (containing >= 0) {
+      return containing;
+    }
+
+    let bestIndex = -1;
+    let bestDistance = Infinity;
+    for (let index = 0; index < groups.length; index += 1) {
+      const group = groups[index];
+      const distance =
+        cursorMin < group.startMin
+          ? group.startMin - cursorMin
+          : cursorMin > group.endMin
+            ? cursorMin - group.endMin
+            : 0;
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        bestIndex = index;
+      }
+    }
+
+    return bestIndex;
+  }
+
+  private editableBlocksForParagraphMotion(cursorMin: number, count: number): TimelineBlock[] {
+    const groups = this.paragraphGroupsAtView();
+    const startIndex = this.paragraphIndexAtCursor(cursorMin, groups);
+    if (startIndex < 0) {
+      return [];
+    }
+
+    const endIndex = Math.min(groups.length, startIndex + Math.max(1, count));
+    const seen = new Set<string>();
+    const blocks: TimelineBlock[] = [];
+
+    for (let index = startIndex; index < endIndex; index += 1) {
+      for (const block of groups[index].editableBlocks) {
+        const eventId = block.eventId;
+        if (eventId && !seen.has(eventId)) {
+          seen.add(eventId);
+          blocks.push(block);
+        }
+      }
+    }
+
+    return blocks;
   }
 
   private handlePasteKey(event: KeyboardEvent): boolean {
@@ -3750,14 +4230,16 @@ export class TimelineChartComponent {
     this.storeYankBuffer([positioned.block]);
   }
 
-  private storeYankBuffer(blocks: TimelineBlock[]): void {
+  private storeYankBuffer(blocks: TimelineBlock[], flash = true): void {
     const viewDate = this.date();
     const minutesOnView = (iso: string, vd: string) =>
       minutesOnViewDate(iso, vd, this.timezone());
     const buffer = buildYankBufferFromBlocks(blocks, viewDate, minutesOnView);
     if (buffer) {
       this.yankBuffer = buffer;
-      this.flashYankedBlocks(blocks);
+      if (flash) {
+        this.flashYankedBlocks(blocks);
+      }
     }
   }
 
@@ -3883,6 +4365,7 @@ export class TimelineChartComponent {
 
   private cancelPendingFirstD(): void {
     this.deleteOperatorArmed = false;
+    this.textObjectPrefixArmed = false;
     if (this.pendingFirstDTimer !== null) {
       clearTimeout(this.pendingFirstDTimer);
       this.pendingFirstDTimer = null;
@@ -3890,6 +4373,8 @@ export class TimelineChartComponent {
   }
 
   private cancelPendingFirstY(): void {
+    this.yOperatorArmed = false;
+    this.textObjectPrefixArmed = false;
     if (this.pendingFirstYTimer !== null) {
       clearTimeout(this.pendingFirstYTimer);
       this.pendingFirstYTimer = null;
@@ -3915,9 +4400,11 @@ export class TimelineChartComponent {
 
     event.preventDefault();
     const factor = direction === 'in' ? KEYBOARD_ZOOM_FACTOR : 1 / KEYBOARD_ZOOM_FACTOR;
-    const anchorOffsetY =
-      direction === 'in' ? this.getCursorAnchorOffsetY() : this.getAnchorOffsetY();
-    this.applyZoomAtAnchor(this.zoomScale() * factor, anchorOffsetY);
+    this.applyZoomAtAnchor(
+      this.zoomScale() * factor,
+      this.getZoomAnchorOffsetY(undefined, true),
+      this.getZoomAnchorMinute(true)
+    );
     return true;
   }
 
@@ -4237,7 +4724,11 @@ export class TimelineChartComponent {
     event.preventDefault();
     const delta = normalizeWheelDelta(event);
     const factor = Math.exp(-delta * PINCH_ZOOM_SENSITIVITY);
-    this.applyZoomAtAnchor(this.zoomScale() * factor, this.getAnchorOffsetY(event));
+    this.applyZoomAtAnchor(
+      this.zoomScale() * factor,
+      this.getZoomAnchorOffsetY(event),
+      this.getZoomAnchorMinute()
+    );
   }
 
   onPointerMove(event: PointerEvent): void {
@@ -4260,7 +4751,8 @@ export class TimelineChartComponent {
     const gesture = event as Event & { scale: number };
     this.applyZoomAtAnchor(
       this.pinchStartScale * gesture.scale,
-      this.pointerAnchorY || this.getAnchorOffsetY()
+      this.getZoomAnchorOffsetY(),
+      this.getZoomAnchorMinute()
     );
   }
 
@@ -4278,6 +4770,33 @@ export class TimelineChartComponent {
     return cursorContentY - el.scrollTop;
   }
 
+  private getZoomAnchorOffsetY(event?: WheelEvent, useCursorAnchor = false): number {
+    if (useCursorAnchor && this.keyboardSettings.vimMotionsEnabled()) {
+      return this.getCursorAnchorOffsetY();
+    }
+    if (event) {
+      return this.getAnchorOffsetY(event);
+    }
+    return this.pointerAnchorY || this.getAnchorOffsetY();
+  }
+
+  private getZoomAnchorMinute(useCursorAnchor = false): number | undefined {
+    if (useCursorAnchor && this.keyboardSettings.vimMotionsEnabled()) {
+      return this.insertCursorMin();
+    }
+    return undefined;
+  }
+
+  private contentYToMinutes(contentY: number): number {
+    const inner = this.canvasInnerHeightPx();
+    if (inner <= 0) {
+      return 0;
+    }
+
+    const relative = Math.max(0, Math.min(inner, contentY - LAYOUT_PADDING_TOP_PX));
+    return (relative / inner) * MINUTES_PER_DAY;
+  }
+
   private getAnchorOffsetY(event?: WheelEvent): number {
     const el = this.scrollContainer()?.nativeElement;
     if (!el) {
@@ -4292,24 +4811,46 @@ export class TimelineChartComponent {
     return el.clientHeight / 2;
   }
 
-  private applyZoomAtAnchor(targetScale: number, anchorOffsetY: number): void {
+  private applyZoomAtAnchor(
+    targetScale: number,
+    anchorOffsetY: number,
+    anchorMinute?: number
+  ): void {
     const clamped = Math.min(MAX_ZOOM, Math.max(this.minZoomScale(), targetScale));
     if (Math.abs(clamped - this.zoomScale()) < 0.001) {
       return;
     }
 
     const el = this.scrollContainer()?.nativeElement;
-    const oldHeight = this.canvasHeightPx();
-    const anchorContentY = el ? el.scrollTop + anchorOffsetY : 0;
-    const anchorRatio = oldHeight > 0 ? anchorContentY / oldHeight : 0;
+    let minute = anchorMinute;
+    if (minute === undefined && el) {
+      minute = this.contentYToMinutes(el.scrollTop + anchorOffsetY);
+    }
 
     this.zoomScale.set(clamped);
+    this.viewportStorage.setZoom(clamped);
 
-    if (!el) {
+    if (!el || minute === undefined) {
       return;
     }
 
-    el.scrollTop = anchorRatio * this.canvasHeightPx() - anchorOffsetY;
+    this.setScrollKeepingMinuteAtViewportOffset(el, minute, anchorOffsetY);
+  }
+
+  /** Re-apply after layout so scrollHeight matches the new canvas height. */
+  private setScrollKeepingMinuteAtViewportOffset(
+    el: HTMLElement,
+    minute: number,
+    viewportOffsetY: number
+  ): void {
+    const apply = () => {
+      const contentY = this.minutesToContentY(minute);
+      const maxTop = Math.max(0, el.scrollHeight - el.clientHeight);
+      el.scrollTop = Math.min(maxTop, Math.max(0, contentY - viewportOffsetY));
+    };
+
+    apply();
+    requestAnimationFrame(() => apply());
   }
 
   /** Most zoomed-out level: full 24h grid fits inside the fixed scroll viewport. */
@@ -4327,7 +4868,7 @@ export class TimelineChartComponent {
     return available / BASE_DAY_HEIGHT_PX;
   }
 
-  private clampZoomToViewport(): void {
+  private clampZoomToViewport(resetScroll = true): void {
     const min = this.minZoomScale();
     const current = this.zoomScale();
     if (current >= min) {
@@ -4335,8 +4876,9 @@ export class TimelineChartComponent {
     }
 
     this.zoomScale.set(min);
+    this.viewportStorage.setZoom(min);
     const el = this.scrollContainer()?.nativeElement;
-    if (el) {
+    if (el && resetScroll) {
       el.scrollTop = 0;
     }
   }

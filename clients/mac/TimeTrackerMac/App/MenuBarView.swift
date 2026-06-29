@@ -2,6 +2,7 @@ import SwiftUI
 
 struct MenuBarView: View {
     @ObservedObject var appState: AppState
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         Group {
@@ -27,7 +28,7 @@ struct MenuBarView: View {
                 }
             } else {
                 Button("Log in…") {
-                    appState.showLoginSheet = true
+                    openWindow(id: "login")
                 }
             }
 

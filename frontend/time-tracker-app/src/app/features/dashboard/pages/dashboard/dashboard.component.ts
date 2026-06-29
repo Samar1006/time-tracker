@@ -15,9 +15,10 @@ import {
 import { toObservable, toSignal } from '@angular/core/rxjs-interop';
 
 import { AuthService } from '../../../../core/services/auth.service';
-import { TimelineService, CreateEventPayload } from '../../../../core/services/timeline.service';
+import { TimelineService, CreateEventPayload, CreateEventResponse } from '../../../../core/services/timeline.service';
 import { TimelineUndoService } from '../../../../core/services/timeline-undo.service';
 import { TimelineKeyboardSettingsService } from '../../../../core/services/timeline-keyboard-settings.service';
+import { TimelineViewportStorageService } from '../../../../core/services/timeline-viewport-storage.service';
 import { VoiceLogService } from '../../../../core/services/voice-log.service';
 import { AppShellComponent } from '../../../../shared/layouts/app-shell/app-shell.component';
 import { TimelineChartComponent } from '../../components/timeline-chart/timeline-chart.component';
@@ -32,6 +33,7 @@ import {
 } from '../../components/timeline-chart/timeline-drag.util';
 import { TimelineBlock, TimelineResponse } from '../../../../core/models/timeline.model';
 import {
+  computeVisibleHourRange,
   getVisibleHours,
   shiftDate,
   toDateInputValue
@@ -60,8 +62,11 @@ export class DashboardComponent {
   private readonly keyboardSettings = inject(TimelineKeyboardSettingsService);
   readonly undoService = inject(TimelineUndoService);
   readonly voiceLog = inject(VoiceLogService);
+  private readonly viewportStorage = inject(TimelineViewportStorageService);
 
-  readonly selectedDate = signal(toDateInputValue(new Date()));
+  readonly selectedDate = signal(
+    this.viewportStorage.getSelectedDate() ?? toDateInputValue(new Date())
+  );
   readonly loading = signal(true);
   readonly error = signal<string | null>(null);
   readonly lastHeard = signal<string | null>(null);
@@ -74,6 +79,10 @@ export class DashboardComponent {
   private readonly timelineByDate = signal<ReadonlyMap<string, TimelineResponse>>(new Map());
   /** Survives timeline chart remounts during day-shift reloads. */
   readonly preservedSelectionIds = signal<readonly string[]>([]);
+
+  constructor() {
+    this.viewportStorage.setSelectedDate(this.selectedDate());
+  }
 
   private readonly dashboardState = toSignal(
     combineLatest([
@@ -168,7 +177,9 @@ export class DashboardComponent {
 
   readonly dayHours = computed(() => {
     const current = this.displayTimeline();
-    return getVisibleHours(current?.hours ?? [], 0, 23);
+    const hours = current?.hours ?? [];
+    const { startHour, endHour } = computeVisibleHourRange(hours, this.selectedDate());
+    return getVisibleHours(hours, startHour, endHour);
   });
 
   @HostListener('document:keydown', ['$event'])
@@ -187,6 +198,18 @@ export class DashboardComponent {
       } else {
         void this.performUndo();
       }
+      return;
+    }
+
+    if (
+      event.ctrlKey &&
+      !event.metaKey &&
+      !event.altKey &&
+      !event.shiftKey &&
+      (event.key === 'r' || event.key === 'R')
+    ) {
+      event.preventDefault();
+      void this.performRedo();
       return;
     }
 
@@ -209,6 +232,7 @@ export class DashboardComponent {
 
   selectDate(date: string): void {
     this.selectedDate.set(date);
+    this.viewportStorage.setSelectedDate(date);
   }
 
   onEventTimeChange(change: EventTimeChangePayload): void {
@@ -240,8 +264,8 @@ export class DashboardComponent {
           this.undoService.record({
             label: change.label,
             viewDate,
-            undo: () => this.applyEventPatch(change.previous),
-            redo: () => this.applyEventPatch(change.next)
+            undo: () => this.applyEventPatchOptimistic(change.previous, viewDate),
+            redo: () => this.applyEventPatchOptimistic(change.next, viewDate)
           });
         },
         error: () => {
@@ -304,8 +328,8 @@ export class DashboardComponent {
           this.undoService.record({
             label: change.label,
             viewDate,
-            undo: () => this.applyEventRenamePatch(classified.previous),
-            redo: () => this.applyEventRenamePatch(classified.next)
+            undo: () => this.applyEventRenamePatchOptimistic(classified.previous, viewDate),
+            redo: () => this.applyEventRenamePatchOptimistic(classified.next, viewDate)
           });
         },
         error: () => {
@@ -345,7 +369,7 @@ export class DashboardComponent {
     );
 
     if (this.selectedDate() !== payload.targetDate) {
-      this.selectedDate.set(payload.targetDate);
+      this.selectDate(payload.targetDate);
     }
 
     forkJoin(
@@ -363,8 +387,18 @@ export class DashboardComponent {
           this.undoService.record({
             label: change.label,
             viewDate: payload.sourceDate,
-            undo: () => this.applyEventPatch(change.previous),
-            redo: () => this.applyEventPatch(change.next)
+            undo: () =>
+              this.applyDayShiftChangeOptimistic(
+                change.previous,
+                payload.targetDate,
+                payload.sourceDate
+              ),
+            redo: () =>
+              this.applyDayShiftChangeOptimistic(
+                change.next,
+                payload.sourceDate,
+                payload.targetDate
+              )
           });
         }
       },
@@ -380,7 +414,7 @@ export class DashboardComponent {
           )
         );
         if (this.selectedDate() !== payload.sourceDate) {
-          this.selectedDate.set(payload.sourceDate);
+          this.selectDate(payload.sourceDate);
         }
         this.preservedSelectionIds.set([]);
         this.softRefresh.set(false);
@@ -443,10 +477,10 @@ export class DashboardComponent {
           this.undoService.record({
             label: 'Create block',
             viewDate,
-            undo: () => this.deleteEventForUndo(currentId, viewDate),
+            undo: () => this.deleteEventOptimistic(currentId, viewDate),
             redo: async () => {
-              const res = await this.createEventForUndo(classified);
-              currentId = res.ids[0];
+              const res = await this.createEventOptimistic(classified, viewDate);
+              currentId = res.ids[0] ?? currentId;
             }
           });
         },
@@ -511,21 +545,8 @@ export class DashboardComponent {
         this.undoService.record({
           label,
           viewDate,
-          undo: async () => {
-            for (const eventId of currentIds) {
-              await this.deleteEventForUndo(eventId, viewDate);
-            }
-          },
-          redo: async () => {
-            currentIds = [];
-            for (const draft of drafts) {
-              const res = await this.createEventForUndo(draft);
-              const id = res.ids[0];
-              if (id) {
-                currentIds.push(id);
-              }
-            }
-          }
+          undo: () => this.deleteEventsOptimistic(currentIds, viewDate),
+          redo: () => this.createEventsOptimistic(drafts, viewDate, currentIds)
         });
       },
       error: () => {
@@ -569,7 +590,6 @@ export class DashboardComponent {
 
     const viewDate = this.selectedDate();
     this.patchError.set(null);
-    this.softRefresh.set(true);
 
     const eventIds = payloads.map((payload) => payload.eventId);
     const eventIdSet = new Set(eventIds);
@@ -589,8 +609,6 @@ export class DashboardComponent {
       payloads.map((payload) => this.timelineService.deleteEvent(payload.eventId, viewDate))
     ).subscribe({
       next: () => {
-        this.softRefresh.set(false);
-
         const restores = payloads.map((payload) => payload.restore);
         const restoredIds: string[] = [];
         const label =
@@ -599,21 +617,8 @@ export class DashboardComponent {
         this.undoService.record({
           label,
           viewDate,
-          undo: async () => {
-            restoredIds.length = 0;
-            for (const restore of restores) {
-              const res = await this.createEventForUndo(restore);
-              const id = res.ids[0];
-              if (id) {
-                restoredIds.push(id);
-              }
-            }
-          },
-          redo: async () => {
-            for (const id of restoredIds) {
-              await this.deleteEventForUndo(id, viewDate);
-            }
-          }
+          undo: () => this.createEventsOptimistic(restores, viewDate, restoredIds),
+          redo: () => this.deleteEventsOptimistic(restoredIds, viewDate)
         });
       },
       error: () => {
@@ -628,7 +633,6 @@ export class DashboardComponent {
           }
           this.setTimelineCache(viewDate, restored);
         }
-        this.softRefresh.set(false);
         this.patchError.set(
           payloads.length === 1
             ? 'Could not delete this time block.'
@@ -654,7 +658,7 @@ export class DashboardComponent {
       this.lastHeard.set(result.transcript);
       if (result.added > 0 || result.updated > 0) {
         if (result.navigateToDate && result.navigateToDate !== this.selectedDate()) {
-          this.selectedDate.set(result.navigateToDate);
+          this.selectDate(result.navigateToDate);
         }
         this.reloadTick.update((n) => n + 1);
       } else if (result.parsed > 0) {
@@ -680,13 +684,10 @@ export class DashboardComponent {
 
     this.navigateToEntryDate(entry.viewDate);
     this.patchError.set(null);
-    this.softRefresh.set(true);
 
     try {
       await this.undoService.undo();
-      this.reloadTick.update((n) => n + 1);
     } catch {
-      this.softRefresh.set(false);
       this.patchError.set('Could not undo timeline change.');
     }
   }
@@ -699,20 +700,17 @@ export class DashboardComponent {
 
     this.navigateToEntryDate(entry.viewDate);
     this.patchError.set(null);
-    this.softRefresh.set(true);
 
     try {
       await this.undoService.redo();
-      this.reloadTick.update((n) => n + 1);
     } catch {
-      this.softRefresh.set(false);
       this.patchError.set('Could not redo timeline change.');
     }
   }
 
   private navigateToEntryDate(viewDate: string): void {
     if (viewDate !== this.selectedDate()) {
-      this.selectedDate.set(viewDate);
+      this.selectDate(viewDate);
     }
   }
 
@@ -746,6 +744,21 @@ export class DashboardComponent {
     ).then(() => undefined);
   }
 
+  private applyEventPatchOptimistic(patch: EventTimePatch, viewDate: string): Promise<void> {
+    const snapshot = this.cachedTimeline(viewDate);
+    const timeline = this.displayTimeline();
+    if (timeline) {
+      this.setTimelineCache(viewDate, applyEventTimeChangeToTimeline(timeline, { next: patch }));
+    }
+
+    return this.applyEventPatch(patch).catch((err) => {
+      if (snapshot) {
+        this.setTimelineCache(viewDate, snapshot);
+      }
+      throw err;
+    });
+  }
+
   private applyEventRenamePatch(patch: EventRenamePatch): Promise<void> {
     return firstValueFrom(
       this.timelineService.updateEvent(patch.eventId, {
@@ -755,6 +768,163 @@ export class DashboardComponent {
         metadata: patch.metadata
       })
     ).then(() => undefined);
+  }
+
+  private applyEventRenamePatchOptimistic(patch: EventRenamePatch, viewDate: string): Promise<void> {
+    const snapshot = this.cachedTimeline(viewDate);
+    const timeline = this.displayTimeline();
+    if (timeline) {
+      this.setTimelineCache(viewDate, applyEventRenameToTimeline(timeline, { next: patch }));
+    }
+
+    return this.applyEventRenamePatch(patch).catch((err) => {
+      if (snapshot) {
+        this.setTimelineCache(viewDate, snapshot);
+      }
+      throw err;
+    });
+  }
+
+  private applyDayShiftChangeOptimistic(
+    patch: EventTimePatch,
+    fromDate: string,
+    toDate: string
+  ): Promise<void> {
+    const snapshot = new Map(this.timelineByDate());
+    const timeline = this.displayTimeline();
+    this.timelineByDate.update((entries) =>
+      applyDayShiftToTimelineCache(
+        entries,
+        fromDate,
+        toDate,
+        [{ next: patch }],
+        timeline,
+        this.userId() ?? ''
+      )
+    );
+
+    return this.applyEventPatch(patch).catch((err) => {
+      this.timelineByDate.set(snapshot);
+      throw err;
+    });
+  }
+
+  private cachedTimeline(viewDate: string): TimelineResponse | null {
+    return this.timelineByDate().get(viewDate) ?? this.displayTimeline();
+  }
+
+  private deleteEventsOptimistic(eventIds: string[], viewDate: string): Promise<void> {
+    const ids = eventIds.filter(Boolean);
+    if (ids.length === 0) {
+      return Promise.resolve();
+    }
+
+    const snapshot = this.cachedTimeline(viewDate);
+    this.removeEventsFromCache(viewDate, ids);
+
+    return firstValueFrom(
+      forkJoin(ids.map((eventId) => this.timelineService.deleteEvent(eventId, viewDate)))
+    )
+      .then(() => undefined)
+      .catch((err) => {
+        if (snapshot) {
+          this.setTimelineCache(viewDate, snapshot);
+        }
+        throw err;
+      });
+  }
+
+  private deleteEventOptimistic(eventId: string, viewDate: string): Promise<void> {
+    return this.deleteEventsOptimistic([eventId], viewDate);
+  }
+
+  private async createEventsOptimistic(
+    payloads: CreateEventPayload[],
+    viewDate: string,
+    idSink: string[]
+  ): Promise<void> {
+    if (payloads.length === 0) {
+      return;
+    }
+
+    const snapshot = this.cachedTimeline(viewDate);
+    const pendingIds = payloads.map((_, index) => `pending-undo-${Date.now()}-${index}`);
+    this.restoreEventsToCache(viewDate, payloads, pendingIds);
+
+    try {
+      const response = await firstValueFrom(this.timelineService.createEvents(payloads));
+      const createdIds = response.ids.filter((id): id is string => Boolean(id));
+      idSink.length = 0;
+      idSink.push(...createdIds);
+
+      const current = this.displayTimeline();
+      if (current) {
+        let updated = current;
+        for (const pendingId of pendingIds) {
+          updated = removeEventFromTimeline(updated, pendingId);
+        }
+        for (let index = 0; index < payloads.length; index += 1) {
+          const createdId = createdIds[index];
+          if (!createdId) {
+            continue;
+          }
+          updated = applyEventCreateToTimeline(
+            updated,
+            this.restorePayloadToDraft(payloads[index], viewDate),
+            createdId
+          );
+        }
+        this.setTimelineCache(viewDate, updated);
+      }
+    } catch (err) {
+      if (snapshot) {
+        this.setTimelineCache(viewDate, snapshot);
+      }
+      throw err;
+    }
+  }
+
+  private async createEventOptimistic(
+    payload: CreateEventPayload,
+    viewDate: string
+  ): Promise<CreateEventResponse> {
+    const ids: string[] = [];
+    await this.createEventsOptimistic([payload], viewDate, ids);
+    return { accepted: ids.length, ids };
+  }
+
+  private restoreEventsToCache(
+    viewDate: string,
+    payloads: CreateEventPayload[],
+    eventIds: string[]
+  ): void {
+    const timeline = this.displayTimeline();
+    if (!timeline) {
+      return;
+    }
+
+    let updated = timeline;
+    for (let index = 0; index < payloads.length; index += 1) {
+      updated = applyEventCreateToTimeline(
+        updated,
+        this.restorePayloadToDraft(payloads[index], viewDate),
+        eventIds[index]
+      );
+    }
+    this.setTimelineCache(viewDate, updated);
+  }
+
+  private removeEventsFromCache(viewDate: string, eventIds: string[]): void {
+    const timeline = this.displayTimeline();
+    if (!timeline) {
+      return;
+    }
+
+    let updated = timeline;
+    for (const eventId of eventIds) {
+      updated = removeEventFromTimeline(updated, eventId);
+    }
+    this.setTimelineCache(viewDate, updated);
   }
 
   private restorePayloadToDraft(
@@ -777,13 +947,5 @@ export class DashboardComponent {
           : {})
       }
     };
-  }
-
-  private deleteEventForUndo(eventId: string, viewDate: string): Promise<void> {
-    return firstValueFrom(this.timelineService.deleteEvent(eventId, viewDate)).then(() => undefined);
-  }
-
-  private createEventForUndo(payload: CreateEventPayload) {
-    return firstValueFrom(this.timelineService.createEvent(payload));
   }
 }

@@ -7,12 +7,11 @@ final class AppState: ObservableObject {
     static let defaultBaseURL = "http://127.0.0.1:4000"
     static let dashboardURL = "http://localhost:4200/dashboard"
 
-    @Published var showLoginSheet = false
     @Published var baseURLString: String {
         didSet { UserDefaults.standard.set(baseURLString, forKey: "apiBaseURL") }
     }
     @Published private(set) var user: UserInfo?
-    @Published private(set) var connectionStatus: ConnectionStatus = .offline
+    @Published private(set) var connectionStatus: ConnectionStatus = .offline(queued: 0)
     @Published private(set) var trackingEnabled = false
 
     let tracker = AppFocusTracker()

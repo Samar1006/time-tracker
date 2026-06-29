@@ -234,6 +234,16 @@
             </div>
           }
 
+          @if (currentTimeIndicator(); as nowLine) {
+            <div
+              class="day-calendar__half-hour-line-wrap"
+              [style.top.%]="nowLine.topPct"
+              [attr.aria-label]="'Current time ' + nowLine.label"
+            >
+              <div class="day-calendar__half-hour-line day-calendar__half-hour-line--now" aria-hidden="true"></div>
+            </div>
+          }
+
           @if (vimMotionsEnabled() && showInsertCursor()) {
             <div
               class="day-calendar__insert-cursor"
